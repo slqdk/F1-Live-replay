@@ -1,0 +1,18 @@
+services:
+  f1live:
+    build: .
+    image: slq-f1-live:latest
+    container_name: f1live
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8137:8137"
+    volumes:
+      - ./data:/data
+    # Giv serveren tid til at lukke optagelsen pænt ved docker stop/opdatering
+    stop_grace_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

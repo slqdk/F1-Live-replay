@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SLQ F1 Live Admin</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  body { display: block; height: auto; overflow: auto; }
+  .admin { max-width: 1240px; margin: 0 auto; padding: 16px; display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+  .admin-top { max-width: 1240px; margin: 0 auto; padding: 14px 16px 0; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .admin-top h1 { margin: 0; font: 600 26px/1.1 var(--font-num); }
+  .admin-top a { color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; min-width: 0; }
+  .card h2 { margin: 0 0 10px; font: 600 18px/1.2 var(--font-num); }
+  .card.wide { grid-column: 1 / -1; }
+  dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; margin: 0; font-size: 15px; }
+  dl.kv dt { color: var(--muted); }
+  dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+  .ok { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--red); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  textarea { width: 100%; min-height: 70px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 8px; font: 13px/1.4 ui-monospace, monospace; }
+  .msg { margin: 8px 0 0; font-size: 14px; min-height: 1.2em; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; border-top: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td .pb-btn { padding: 4px 8px; font-size: 13px; }
+  .log { background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 8px 10px; height: 360px; overflow: auto;
+    font: 12.5px/1.45 ui-monospace, "Cascadia Mono", monospace; white-space: pre-wrap; }
+  .season-meeting { margin: 10px 0 4px; font-weight: 600; }
+  .scroll { max-height: 420px; overflow: auto; }
+  select.pb-select { padding: 5px 8px; }
+</style>
+</head>
+<body>
+<div class="admin-top">
+  <h1>SLQ F1 Live Admin</h1>
+  <a href="./">Til visningen</a>
+</div>
+<main class="admin">
+  <section class="card">
+    <h2>Feed</h2>
+    <dl class="kv" id="feedKv"></dl>
+    <div class="actions">
+      <button class="pb-btn wide" data-feed="auto">Auto</button>
+      <button class="pb-btn wide" data-feed="always">Altid forbundet</button>
+      <button class="pb-btn wide" data-feed="off">Fra</button>
+      <button class="pb-btn wide" data-feed="reconnect">Genforbind</button>
+    </div>
+    <p class="msg" id="feedMsg" role="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>F1 TV-login</h2>
+    <dl class="kv" id="tokenKv"></dl>
+    <div class="actions"><button class="pb-btn wide" id="btnLogin">Log ind nu</button></div>
+    <label for="tokenInput" style="display:block;margin-top:12px;color:var(--muted);font-size:14px">Eller indsæt login-session-cookien / tokenet manuelt</label>
+    <textarea id="tokenInput" spellcheck="false" autocomplete="off"></textarea>
+    <div class="actions"><button class="pb-btn wide" id="btnToken">Gem token</button></div>
+    <p class="msg" id="tokenMsg" role="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>Optagelse</h2>
+    <dl class="kv" id="recKv"></dl>
+    <div class="actions"><button class="pb-btn wide" id="btnClose">Afslut optagelse</button></div>
+    <p class="msg" id="recMsg" role="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>Næste sessioner</h2>
+    <dl class="kv" id="nextKv"></dl>
+    <div class="actions"><button class="pb-btn wide" id="btnSchedule">Opdatér sæsonplan</button></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Optagelser</h2>
+    <div class="scroll"><table id="recTable"></table></div>
+    <p class="msg" id="recTableMsg" role="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>Arkiv: importér sessioner</h2>
+    <p style="margin:0 0 10px;color:var(--muted);font-size:14px">Henter F1's officielle arkiv for sessioner du ikke selv optog. Kræver F1 TV.</p>
+    <div class="actions" style="margin-top:0">
+      <select id="year" class="pb-select" aria-label="Sæson"></select>
+      <button class="pb-btn wide" id="btnSeason">Vis sessioner</button>
+    </div>
+    <div id="season" class="scroll" style="margin-top:10px"></div>
+    <p class="msg" id="seasonMsg" role="status"></p>
+  </section>
+
+  <section class="card">
+    <h2>Jobs og medier</h2>
+    <dl class="kv" id="mediaKv"></dl>
+    <div class="scroll" style="margin-top:10px"><table id="jobTable"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>Topics i denne forbindelse</h2>
+    <div class="scroll"><table id="topicTable"></table></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Log</h2>
+    <div class="log" id="log" aria-live="polite"></div>
+  </section>
+</main>
+<script type="module" src="admin.js"></script>
+</body>
+</html>

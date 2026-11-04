@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+data/
+.env
+*.f1rec
+publish/

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Headless 24/7-server til Linux/Docker. .NET 10 (LTS til nov. 2028);
+       Core forbliver net8.0, så Windows-app'en stadig kan bygges i VS2022. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SlqF1Live.Server</AssemblyName>
+    <RootNamespace>SlqF1Live.Server</RootNamespace>
+    <Version>2.0.0</Version>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SlqF1Live.Core/SlqF1Live.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="wwwroot/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

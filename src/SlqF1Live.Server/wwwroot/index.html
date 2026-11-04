@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1722">
+<title>SLQ F1 Live</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-mode="live">
+<div id="flagband" class="flagband" data-flag="none" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="session">
+    <h1 id="meeting">SLQ F1 Live</h1>
+    <p id="sessionName" class="session-name">Venter på data</p>
+  </div>
+  <div class="clock-block">
+    <div id="clock" class="clock" aria-live="off">–:––:––</div>
+    <div id="lapcount" class="lapcount"></div>
+  </div>
+  <div id="trackstatus" class="trackstatus" data-flag="none">Ingen session</div>
+  <div id="weather" class="weather" hidden></div>
+  <nav class="modes" aria-label="Visning">
+    <button type="button" data-mode="live" aria-pressed="true">Live</button>
+    <button type="button" data-mode="delay" aria-pressed="false">Forsinket</button>
+    <button type="button" data-mode="replay" aria-pressed="false">Afspilning</button>
+  </nav>
+</header>
+
+<main class="layout">
+  <section class="tower-wrap" aria-label="Timing">
+    <div class="tower-head" role="row">
+      <span class="c-pos">Pos</span>
+      <span class="c-drv">Kører</span>
+      <span class="c-gap" id="hGap">Gab</span>
+      <span class="c-int" id="hInt">Int.</span>
+      <span class="c-last">Sidste</span>
+      <span class="c-best">Bedste</span>
+      <span class="c-sec">S1</span>
+      <span class="c-sec">S2</span>
+      <span class="c-sec">S3</span>
+      <span class="c-tyre">Dæk</span>
+      <span class="c-pit">Pit</span>
+    </div>
+    <div id="tower" class="tower" role="table" aria-label="Timing-tårn"></div>
+    <p id="towerEmpty" class="empty">Ingen timingdata endnu. Under en session fyldes tårnet automatisk.</p>
+  </section>
+
+  <aside class="side">
+    <section class="panel map-panel" aria-label="Banekort">
+      <canvas id="map" class="map" width="600" height="400"></canvas>
+      <p id="mapEmpty" class="empty small">Banekortet kræver positionsdata (F1 TV).</p>
+    </section>
+    <section class="panel rc-panel" aria-labelledby="rcTitle">
+      <h2 id="rcTitle">Race control</h2>
+      <ol id="rc" class="rc"></ol>
+    </section>
+    <section class="panel radio-panel" aria-labelledby="radioTitle">
+      <div class="panel-head">
+        <h2 id="radioTitle">Teamradio</h2>
+        <label class="toggle"><input type="checkbox" id="radioAuto"> Afspil nye automatisk</label>
+      </div>
+      <ol id="radio" class="radio"></ol>
+      <audio id="audio" preload="none"></audio>
+    </section>
+  </aside>
+</main>
+
+<section id="playbar" class="playbar" aria-label="Afspilning" hidden>
+  <div class="pb-row pb-source">
+    <button type="button" id="btnRecordings" class="pb-btn wide">Vælg optagelse</button>
+    <span id="recTitle" class="rec-title">Ingen optagelse valgt</span>
+    <span id="loadState" class="load-state" role="status"></span>
+  </div>
+  <div class="pb-row pb-main">
+    <button type="button" id="btnPlay" class="pb-btn play" aria-label="Afspil">▶</button>
+    <button type="button" class="pb-btn" data-nudge="-60">−60</button>
+    <button type="button" class="pb-btn" data-nudge="-10">−10</button>
+    <button type="button" class="pb-btn" data-nudge="-1">−1</button>
+    <input id="slider" class="slider" type="range" min="0" max="1000" value="0" step="1" aria-label="Position i optagelsen">
+    <button type="button" class="pb-btn" data-nudge="1">+1</button>
+    <button type="button" class="pb-btn" data-nudge="10">+10</button>
+    <button type="button" class="pb-btn" data-nudge="60">+60</button>
+    <span id="posLabel" class="pos-label">0:00:00 / 0:00:00</span>
+    <select id="speed" class="pb-select" aria-label="Hastighed">
+      <option value="0.5">0,5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+      <option value="5">5×</option>
+      <option value="10">10×</option>
+    </select>
+    <button type="button" id="btnSync" class="pb-btn wide" title="Spring til sessionens start og vent på dig">Sync til start</button>
+  </div>
+  <div class="pb-row pb-delay">
+    <span class="delay-label">Forsinkelse</span>
+    <button type="button" class="pb-btn" data-delay="-30">−30</button>
+    <button type="button" class="pb-btn" data-delay="-5">−5</button>
+    <button type="button" class="pb-btn" data-delay="-1">−1</button>
+    <output id="delayOut" class="delay-out">0 s</output>
+    <button type="button" class="pb-btn" data-delay="1">+1</button>
+    <button type="button" class="pb-btn" data-delay="5">+5</button>
+    <button type="button" class="pb-btn" data-delay="30">+30</button>
+    <button type="button" id="btnMatch" class="pb-btn wide" title="Tryk når sessionen starter på TV'et">Start set på TV nu</button>
+  </div>
+  <p id="syncHint" class="sync-hint" hidden></p>
+</section>
+
+<dialog id="recDialog" class="rec-dialog">
+  <form method="dialog" class="rec-dialog-head">
+    <h2>Optagelser</h2>
+    <button class="pb-btn" value="close">Luk</button>
+  </form>
+  <div id="recList" class="rec-list"></div>
+</dialog>
+
+<footer class="foot">
+  <span id="status">Forbinder…</span>
+  <a href="admin.html" class="admin-link">Admin</a>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
