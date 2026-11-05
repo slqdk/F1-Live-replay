@@ -320,6 +320,8 @@ button, select, input, textarea { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .pb-btn:hover { border-color: var(--muted); }
+.pb-btn:disabled { opacity: .45; cursor: default; }
+.pb-btn:disabled:hover { border-color: var(--line); }
 a.pb-btn { text-decoration: none; display: inline-block; }
 .pb-btn.play { min-width: 3.4em; font-size: 17px; }
 .pb-btn.wide { padding-inline: 14px; }
