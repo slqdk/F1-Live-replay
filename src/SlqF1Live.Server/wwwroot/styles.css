@@ -268,6 +268,13 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .rc .f-SC .msg { border-color: var(--amber); }
 .rc li.fresh .msg { color: #fff; }
 
+.rc li.none, .radio li.none {
+  display: block;
+  color: var(--muted);
+  font: 400 14px/1.4 var(--font-ui);
+  padding: 4px 0;
+}
+
 /* ---------- Teamradio ---------- */
 .radio li {
   display: grid;

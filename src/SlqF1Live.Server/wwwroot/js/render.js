@@ -315,7 +315,7 @@ export function renderRaceControl(state) {
           `<span class="when">${esc(fmtLocalTime(m.Utc))}</span>` +
           `<span class="msg">${esc(m.Message || "")}</span></li>`;
       }).join("")
-    : `<li><span></span><span></span><span class="msg">Ingen meddelelser endnu.</span></li>`;
+    : `<li class="none">Ingen meddelelser endnu.</li>`;
 }
 
 // ---------- Teamradio ----------
@@ -330,7 +330,7 @@ export function renderRadio(state, mediaStem, audio, onPlay) {
   const list = $("radio");
   const items = caps.slice(-40).reverse();
   if (!items.length) {
-    list.innerHTML = `<li><span></span><span></span><span class="when">Ingen teamradio endnu.</span><span></span></li>`;
+    list.innerHTML = `<li class="none">Ingen teamradio endnu.</li>`;
     return caps;
   }
   list.innerHTML = items.map((c) => {
