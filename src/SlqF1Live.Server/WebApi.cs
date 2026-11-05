@@ -35,7 +35,8 @@ public sealed partial class ServerHost
         if (path == "/health") return false;
 
         // ---------- Admin ----------
-        if (path is "/admin" or "/admin.html" or "/admin.js" || path.StartsWith("/api/", StringComparison.Ordinal) && path != "/api/public")
+        if (path is "/admin" or "/admin.html" or "/admin.js" ||
+            path.StartsWith("/api/", StringComparison.Ordinal) && path is not ("/api/public" or "/api/dev"))
         {
             if (!Access.IsAdmin(req))
             {
@@ -78,6 +79,16 @@ public sealed partial class ServerHost
         if (path == "/api/public")
         {
             SseServer.WriteJson(res, PublicStatus().ToJsonString());
+            return true;
+        }
+        if (path == "/api/dev")
+        {
+            await HandleDevAsync(ctx);
+            return true;
+        }
+        if (path is "/analyse" or "/analyse.html")
+        {
+            await ServeStaticAsync(ctx, "analyse.html");
             return true;
         }
         if (path.StartsWith("/media/", StringComparison.Ordinal))
@@ -226,6 +237,39 @@ public sealed partial class ServerHost
                 return;
         }
         SseServer.WriteJson(res, Err("ukendt API-kald"), 404);
+    }
+
+    /// GET /api/dev?year=2026&mode=quali|race — sæsonudvikling fra OpenF1.
+    /// 200 = data; 202 {loading, progress} = hentes stadig, spørg igen.
+    private async Task HandleDevAsync(HttpListenerContext ctx)
+    {
+        var res = ctx.Response;
+        var q = ctx.Request.QueryString;
+        var nowYear = DateTime.UtcNow.Year;
+        if (!int.TryParse(q["year"], out var year)) year = nowYear;
+        if (year < DevService.FirstYear || year > nowYear)
+        {
+            SseServer.WriteJson(res, Err($"år skal være {DevService.FirstYear}–{nowYear}"), 400);
+            return;
+        }
+        var quali = q["mode"] != "race";
+        try
+        {
+            // Kold sæson ≈ 1 min: vent kort, ellers 202 + fremdrift — siden spørger igen
+            var (json, progress) = await Dev.GetAsync(year, quali, TimeSpan.FromSeconds(8), _ct);
+            res.Headers["Cache-Control"] = "no-cache";
+            if (json is null)
+            {
+                SseServer.WriteJson(res, new JsonObject { ["loading"] = true, ["progress"] = progress }.ToJsonString(), 202);
+                return;
+            }
+            SseServer.WriteJson(res, json);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException
+                                       or TimeoutException or System.Text.Json.JsonException)
+        {
+            SseServer.WriteJson(res, Err("kunne ikke hente fra OpenF1: " + ex.Message), 502);
+        }
     }
 
     private static string? HeaderPath(string recPath)

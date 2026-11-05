@@ -14,6 +14,9 @@ det i browseren, synkront med TV'et, også når du ser løbet forskudt.
   (søg, hastighed, ±1/10/60 s og *Sync til start*).
 - **Auto-login til F1 TV.** Tokenet holder kun ca. 4 dage, og containeren
   fornyer det selv.
+- **Udvikling over sæsonen** (`/analyse`): vælg hold og sammenlign deres
+  tider i kvalifikation og løb GP for GP, som Development-fanen på den
+  gamle F1 Analyse-side. Data fra OpenF1 (2023 og frem, kræver ikke F1 TV).
 - **live.html på f1.slq.dk virker uændret** (samme `/state`, `/events`,
   `/recordings`).
 
@@ -83,6 +86,27 @@ Shift+←/→ = ±10 s (i Forsinket justerer pilene forsinkelsen).
 Bogmærke til TV'et: `https://f1live.slq.dk/?mode=delay`, eller
 `?mode=replay&file=<fil>.f1rec&t=<sekunder>`.
 
+### Udvikling over sæsonen
+
+Linket **Udvikling** øverst på visningen (eller `https://f1live.slq.dk/analyse`).
+
+- **Kvalifikation/Løb**: gab til pole eller vinderen pr. Grand Prix. 0 er
+  øverst, så højere er bedre. Tooltippen viser også gabet i meter.
+- **Kørere/Hold**: én linje pr. kører (holdets bedste kører fuld, makkeren
+  stiplet), eller én linje pr. hold med holdets bedste bil pr. GP.
+- **Hold-chips**: klik for at vælge, hvilke hold der sammenlignes. Som
+  standard vises bedste og dårligste hold. Valget huskes pr. sæson.
+- **Zoom** skjuler outliers (punkter udenfor vises som ▼ på kanten).
+  **Tabel** viser alle værdier.
+- Hold med næsten samme farve (fx Ferrari og Audi) får hver sin punktform.
+- Linket kan deles: sæson, tilstand og valgte hold står i adressen.
+
+Første gang tager det op til et par minutter at hente sæsonen, fordi
+OpenF1 højst tillader ca. 30 kald i minuttet. Containeren starter selv på
+det, når den starter. Resultaterne gemmes på disken (`data/cache/openf1/`),
+så derefter svarer siden med det samme. Containeren henter nye resultater
+45 minutter efter hver session.
+
 ### Afspilning på f1.slq.dk (live.html)
 
 Kontrakten er uændret: Indtast `https://f1live.slq.dk` og tryk Forbind.
@@ -136,8 +160,8 @@ F1's arkiv og bygger en `.f1rec`, der afspilles som alle andre optagelser.
 
 | Hvad | Hvem |
 |---|---|
-| Visning, `/events`, `/recordings`, `/media` | alle, medmindre `VIEW_ALLOW`/`VIEW_TOKEN` er sat |
-| `/admin`, `/api/*` | `ADMIN_ALLOW` (LAN/WireGuard), eller `?key=<ADMIN_TOKEN>` |
+| Visning, `/analyse`, `/events`, `/recordings`, `/media`, `/api/public`, `/api/dev` | alle, medmindre `VIEW_ALLOW`/`VIEW_TOKEN` er sat |
+| `/admin`, øvrige `/api/*` | `ADMIN_ALLOW` (LAN/WireGuard), eller `?key=<ADMIN_TOKEN>` |
 
 Optagelser med F1 TV-data er til personlig brug. Gør dem ikke offentlige:
 Sæt `VIEW_ALLOW=30.11.0.0/20,10.0.0.0/20`, eller brug en *Access List* i
@@ -155,14 +179,16 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 | `GET /recordings/<fil>?profile=timing\|map\|tele&from=N` | let udgave + `X-Next-Offset` |
 | `GET /media/<session>/TeamRadio/<fil>.mp3` | teamradio |
 | `GET /api/public` | feed/optagelse/næste sessioner |
+| `GET /analyse` | udviklingssiden |
+| `GET /api/dev?year=2026&mode=quali\|race` | sæsonens GP'er, kørere med gab (s og m), hold bedst først |
 | `/admin`, `/api/status`, `/api/log`, `POST /api/token`, `/api/login`, `/api/feed`, `/api/archive/*` | admin |
 
 ## Udvikling
 
 ```bash
-dotnet run --project tests/CoreTests            # 240 checks (Core)
+dotnet run --project tests/CoreTests            # 277 checks (Core)
 dotnet run --project tests/ServerTests          # adgangskontrol
-node --test tests/web/merge.test.mjs            # webklientens merge-regler
+node --test tests/web/*.test.mjs                # merge-regler + udviklingsgrafen
 dotnet run --project src/SlqF1Live.Server       # lokalt: DATA_DIR=./data PORT=8137
 ```
 

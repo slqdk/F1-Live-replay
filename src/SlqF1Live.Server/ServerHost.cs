@@ -26,6 +26,7 @@ public sealed partial class ServerHost : IDisposable
     public MediaService Media { get; }
     public SseServer Server { get; }
     public AccessControl Access { get; }
+    public DevService Dev { get; }
     public HttpClient Http { get; }
     public DateTime StartedUtc { get; } = DateTime.UtcNow;
     public static string Version { get; } =
@@ -60,6 +61,7 @@ public sealed partial class ServerHost : IDisposable
         Http.DefaultRequestHeaders.UserAgent.ParseAdd($"SLQ-F1-Live/{Version}");
 
         Access = new AccessControl(cfg);
+        Dev = new DevService(cfg, log);
         Tokens = new TokenManager(cfg.TokenFile, null, log.Info)
         {
             Username = cfg.F1Username,
@@ -140,6 +142,12 @@ public sealed partial class ServerHost : IDisposable
         {
             Media.ScheduleArchive(info);
             _topicStats.Clear();
+            // OpenF1 har resultatet ca. 30 min efter sessionen — opdatér analysen
+            _ = Task.Run(async () =>
+            {
+                try { await Task.Delay(TimeSpan.FromMinutes(45), _ct); } catch (OperationCanceledException) { return; }
+                Dev.Warm(_ct, force: true);
+            });
         };
     }
 
@@ -198,6 +206,7 @@ public sealed partial class ServerHost : IDisposable
         try { await Schedule.RefreshAsync(ct); } catch (OperationCanceledException) { return; }
         try { await Schedule.PollStreamingAsync(ct); } catch (OperationCanceledException) { return; }
         _ = Task.Run(() => Tokens.EnsureValidAsync(ct), ct);
+        Dev.Warm(ct);
 
         _ = Every(TimeSpan.FromSeconds(60), async c =>
         {
@@ -382,6 +391,7 @@ public sealed partial class ServerHost : IDisposable
         Feed.Stop();
         Rec.Dispose();
         Server.Dispose();
+        Dev.Dispose();
         Http.Dispose();
     }
 }

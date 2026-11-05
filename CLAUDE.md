@@ -15,7 +15,7 @@ source of truth, and it must be updated in the same change.**
 - `src/SlqF1Live` — WinForms app (net8.0-windows). Compile-check on Linux with
   `dotnet build src/SlqF1Live -p:EnableWindowsTargeting=true`.
 - `tests/CoreTests`, `tests/ServerTests` — console test runners (Check/Eq).
-  `tests/web/merge.test.mjs` — `node --test tests/web/merge.test.mjs`.
+  `tests/web/*.test.mjs` — `node --test tests/web/*.test.mjs`.
 
 ## Conventions
 - UI text, log lines and code comments are Danish; identifiers English.
@@ -28,6 +28,6 @@ source of truth, and it must be updated in the same change.**
 ```
 dotnet run --project tests/CoreTests -c Release
 dotnet run --project tests/ServerTests -c Release
-node --test tests/web/merge.test.mjs
+node --test tests/web/*.test.mjs
 ```
 A local mock of F1's SignalR Core endpoint can be used via `F1_LIVETIMING_URL=http://localhost:<port>`.

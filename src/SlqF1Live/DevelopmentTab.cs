@@ -27,11 +27,7 @@ public sealed class DevelopmentTab : UserControl
 
     private bool _isQuali = true;
 
-    private sealed record SeasonData(List<string> GpLabels, List<string> GpNames,
-        List<(string Dn, List<DevPoint?> Points)> Series,
-        Dictionary<string, JsonObject> Drivers, List<string> Skipped);
-
-    private readonly Dictionary<string, SeasonData> _cache = new(); // "year:mode"
+    private readonly Dictionary<string, DevSeason> _cache = new(); // "year:mode"
     private readonly Dictionary<string, HashSet<string>> _hidden = new();
     private readonly HashSet<string> _initialized = new();
     private bool _updatingTeams;
@@ -160,111 +156,15 @@ public sealed class DevelopmentTab : UserControl
             : "Udvikling over sæsonen — tid efter vinderen pr. Grand Prix";
     }
 
-    private static string TeamOf(SeasonData data, string dn) =>
-        data.Drivers.TryGetValue(dn, out var d)
-            ? d["team_name"]?.GetValue<string>() ?? d["team_colour"]?.GetValue<string>() ?? "Ukendt"
-            : "Ukendt";
+    private static string TeamOf(DevSeason data, string dn) => data.TeamOf(dn);
+    private static string NameOf(DevSeason data, string dn) => data.NameOf(dn);
+    private static string ColourOf(DevSeason data, string dn) => data.ColourOf(dn);
 
-    private static string NameOf(SeasonData data, string dn) =>
-        data.Drivers.TryGetValue(dn, out var d)
-            ? d["name_acronym"]?.GetValue<string>() ?? "#" + dn : "#" + dn;
+    // ---------- Dataload (fælles med serveren: Core/DevSeasonLoader) ----------
 
-    private static string ColourOf(SeasonData data, string dn) =>
-        data.Drivers.TryGetValue(dn, out var d)
-            ? d["team_colour"]?.GetValue<string>() ?? "888888" : "888888";
-
-    // ---------- Dataload ----------
-
-    private async Task<JsonArray> CachedResultAsync(string sessionKey, string? dateEnd, CancellationToken ct)
-    {
-        var dir = Path.Combine(AppContext.BaseDirectory, "cache");
-        Directory.CreateDirectory(dir);
-        var file = Path.Combine(dir, "openf1_result_" + sessionKey + ".json");
-        if (File.Exists(file))
-        {
-            try
-            {
-                if (JsonNode.Parse(File.ReadAllText(file)) is JsonArray cached && cached.Count > 0)
-                    return cached;
-            }
-            catch (System.Text.Json.JsonException) { /* korrupt — hent igen */ }
-        }
-        var rows = await _api.GetArrayAsync($"/session_result?session_key={sessionKey}", ct);
-        var ended = dateEnd is not null && DateTime.TryParse(dateEnd, out var end)
-            && DateTime.UtcNow - end.ToUniversalTime() > TimeSpan.FromHours(2);
-        if (rows.Count > 0 && ended)
-        {
-            try { File.WriteAllText(file, rows.ToJsonString()); }
-            catch (IOException) { /* ignorér */ }
-        }
-        return rows;
-    }
-
-    private async Task<SeasonData> LoadSeasonAsync(int year, bool isQuali, CancellationToken ct)
-    {
-        _lblStatus.Text = "Henter kalender…";
-        var meetings = (await _api.GetArrayAsync($"/meetings?year={year}", ct))
-            .OrderBy(m => m?["date_start"]?.GetValue<string>() ?? "").ToList();
-        var seasonSessions = await _api.GetArrayAsync($"/sessions?year={year}", ct);
-
-        var wantType = isQuali ? "qualifying" : "race";
-        var wantName = isQuali ? "Qualifying" : "Race";
-        var targets = new List<(JsonNode Meeting, JsonNode Session)>();
-        foreach (var m in meetings)
-        {
-            var mk = m?["meeting_key"]?.ToString();
-            var ss = seasonSessions.Where(s => s?["meeting_key"]?.ToString() == mk &&
-                string.Equals(s?["session_type"]?.GetValue<string>(), wantType, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(s => s?["date_start"]?.GetValue<string>() ?? "").ToList();
-            if (ss.Count == 0) continue;
-            var main = ss.FirstOrDefault(s => s?["session_name"]?.GetValue<string>() == wantName) ?? ss[^1];
-            var start = main?["date_start"]?.GetValue<string>();
-            if (start is null || !DateTime.TryParse(start, out var st) ||
-                st.ToUniversalTime() > DateTime.UtcNow) continue;
-            targets.Add((m!, main!));
-        }
-
-        var drivers = new Dictionary<string, JsonObject>();
-        if (targets.Count > 0)
-        {
-            var lastKey = targets[^1].Session["session_key"]!.ToString();
-            foreach (var d in await _api.GetArrayAsync($"/drivers?session_key={lastKey}", ct))
-            {
-                var dn = d?["driver_number"]?.ToString();
-                if (dn is not null && d is JsonObject o && !drivers.ContainsKey(dn)) drivers[dn] = o;
-            }
-        }
-
-        var gpLabels = new List<string>();
-        var gpNames = new List<string>();
-        var perGp = new List<Dictionary<string, DevPoint>>();
-        var skipped = new List<string>();
-        for (var i = 0; i < targets.Count; i++)
-        {
-            var (meeting, session) = targets[i];
-            _lblStatus.Text = $"Henter resultater… ({i + 1}/{targets.Count})";
-            JsonArray rows;
-            try
-            {
-                rows = await CachedResultAsync(session["session_key"]!.ToString(),
-                    session["date_end"]?.GetValue<string>(), ct);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception) { rows = new JsonArray(); }
-            var circuit = meeting["circuit_short_name"]?.GetValue<string>() ?? "?";
-            if (rows.Count == 0) { skipped.Add(circuit); continue; }
-            var len = HistoryStats.TrackLengthFor(circuit);
-            gpLabels.Add(circuit);
-            gpNames.Add(meeting["meeting_name"]?.GetValue<string>() ?? circuit);
-            perGp.Add(DevStats.DevPointsForSession(rows, isQuali, len));
-        }
-
-        var allDn = perGp.SelectMany(g => g.Keys).Distinct().ToList();
-        var series = allDn.Select(dn => (dn,
-            perGp.Select(g => g.TryGetValue(dn, out var p) ? p : null).ToList())).ToList();
-        _lblStatus.Text = skipped.Count > 0 ? "Uden resultatdata: " + string.Join(", ", skipped) : "";
-        return new SeasonData(gpLabels, gpNames, series, drivers, skipped);
-    }
+    private Task<DevSeason> LoadSeasonAsync(int year, bool isQuali, CancellationToken ct) =>
+        DevSeasonLoader.LoadAsync(_api, year, isQuali, Path.Combine(AppContext.BaseDirectory, "cache"),
+            text => _lblStatus.Text = text, ct);
 
     // ---------- Rendering ----------
 

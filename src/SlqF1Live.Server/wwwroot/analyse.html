@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0f1722">
+<title>SLQ F1 Udvikling</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="analyse.css">
+</head>
+<body class="analyse">
+<header class="an-top">
+  <div>
+    <h1>Udvikling over sæsonen</h1>
+    <p id="subtitle" class="an-sub">Tid efter pole pr. Grand Prix. Data fra OpenF1.</p>
+  </div>
+  <nav class="an-nav" aria-label="Sider">
+    <a href="./">Timing</a>
+    <a href="admin.html">Admin</a>
+  </nav>
+</header>
+
+<main class="an-main">
+  <section class="an-filters" aria-label="Filtre">
+    <label class="an-field">
+      <span>Sæson</span>
+      <select id="year" class="pb-select"></select>
+    </label>
+    <div class="an-seg" role="group" aria-label="Session">
+      <button type="button" data-mode="quali" aria-pressed="true">Kvalifikation</button>
+      <button type="button" data-mode="race" aria-pressed="false">Løb</button>
+    </div>
+    <div class="an-seg" role="group" aria-label="Linjer">
+      <button type="button" data-per="driver" aria-pressed="true">Kørere</button>
+      <button type="button" data-per="team" aria-pressed="false">Hold (bedste bil)</button>
+    </div>
+    <label class="toggle an-zoom"><input type="checkbox" id="zoom"> Zoom (skjul outliers)</label>
+    <div class="an-seg" role="group" aria-label="Visning">
+      <button type="button" data-view="chart" aria-pressed="true">Graf</button>
+      <button type="button" data-view="table" aria-pressed="false">Tabel</button>
+    </div>
+  </section>
+
+  <section class="an-teams" aria-labelledby="teamsLabel">
+    <div class="an-teams-head">
+      <h2 id="teamsLabel">Hold</h2>
+      <span class="an-hint">Klik for at vælge, hvilke hold der sammenlignes. Snit = gennemsnitligt gab i sæsonen.</span>
+      <div class="an-teams-actions">
+        <button type="button" class="pb-btn" id="teamsAll">Vis alle</button>
+        <button type="button" class="pb-btn" id="teamsDefault">Bedste og dårligste</button>
+        <button type="button" class="pb-btn" id="teamsNone">Ryd</button>
+      </div>
+    </div>
+    <div id="chips" class="an-chips"></div>
+  </section>
+
+  <section class="an-card" aria-labelledby="chartTitle">
+    <div class="an-card-head">
+      <h2 id="chartTitle">Tid efter pole pr. Grand Prix</h2>
+      <p id="status" class="an-status" role="status">Henter sæsondata…</p>
+    </div>
+    <div id="chartWrap" class="an-chart-wrap">
+      <div id="chart" class="an-chart" tabindex="0" aria-describedby="chartHelp"></div>
+      <div id="tooltip" class="an-tip" hidden></div>
+    </div>
+    <div id="tableWrap" class="an-table-wrap" hidden></div>
+    <p id="chartHelp" class="an-foot">
+      Højere er bedre: 0 = pole/vinderen. Fuld linje er holdets bedste kører over sæsonen, stiplet er makkeren.
+      Hvert hold har sin egen punktform. Huller betyder ingen tid eller udgået. Piletaster flytter markøren.
+    </p>
+    <p id="skipped" class="an-foot"></p>
+  </section>
+</main>
+
+<script type="module" src="js/analyse.js"></script>
+</body>
+</html>

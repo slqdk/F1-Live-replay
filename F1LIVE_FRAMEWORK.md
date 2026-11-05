@@ -12,6 +12,7 @@ livetiming.formula1.com  :8137 bag Nginx Proxy Manager (f1live.slq.dk)
                           ├─ optager hver session → data/recordings/*.f1rec
                           ├─ teamradio-mp3 + F1-arkiv efter sessionen
                           ├─ egen visning: /  (live / forsinket / afspilning)
+                          ├─ udvikling: /analyse (kval./løb pr. hold, OpenF1)
                           └─ admin: /admin   (kun LAN/WireGuard)
 f1.slq.dk/live.html taler samme kontrakt (/state /events /recordings).
 Windows-app'en (WinForms) kører stadig selvstændigt med samme Core.
@@ -32,11 +33,16 @@ Windows-app'en (WinForms) kører stadig selvstændigt med samme Core.
 | Core/F1Auth.cs | Udtræk token af cookie/JSON/JWT, udløb/abonnement |
 | Core/F1Schedule.cs | Jolpica-sæsonplan, StreamingStatus, sessionsvinduer |
 | Core/F1Archive.cs | F1's arkiv (download, teamradio-stier) + ArchiveConverter (→ .f1rec) |
+| Core/OpenF1Client.cs | api.openf1.org: 400 ms mellem kald, 28 kald/rullende minut, 429-backoff |
+| Core/DevStats.cs | Development-punkter pr. kører (gab i s og m), holdsnit, standardvalg |
+| Core/DevSeasonLoader.cs | Hel sæson kval./løb fra OpenF1 → DevSeason + web-JSON (server OG WinForms) |
 | Server/ServerHost.cs | Ledningsføring, feed-styring efter plan, status |
 | Server/WebApi.cs | Adgangskontrol, statiske filer, /media, /api/* |
 | Server/MediaService.cs | Teamradio-kø, arkiv-jobs efter session, import/byg |
+| Server/DevService.cs | /api/dev: cache (disk + hukommelse), deling af samtidige hent, opvarmning |
 | Server/AccessControl.cs | CIDR, betroede proxies (NPM), admin-/visningsnøgler |
 | Server/wwwroot/js/* | merge.js (samme regler som C#), player.js, render.js, app.js |
+| Server/wwwroot/analyse.* + js/analyse.js, js/devchart.js | Udviklingssiden: filtre, hold-chips, SVG-graf, tabel |
 | Server/wwwroot/admin.* | Adminside |
 | (historisk) f1relay/* | Node-relayet — FORÆLDET (klassisk SignalR, virker ikke mod F1 i dag) |
 
@@ -187,10 +193,91 @@ En ulæselig fil overskrives aldrig (nyt navn `_2`).
   tomt snapshot, `ts` = t0 + offset). `<stem>_arkiv.f1rec` hvis en live-optagelse findes.
 - Admin: sæsonindeks (`static/<år>/Index.json`) → Importér.
 
+## Udvikling over sæsonen (/analyse, OpenF1)
+
+Sammenligner holdenes tider i kvalifikation og løb GP for GP — som
+Development-fanen på den gamle F1 Analyse-side og i Windows-app'en.
+Datakilden er OpenF1 (gratis, 2023→), ikke F1's arkiv (lukket bag F1 TV
+siden okt. 2026) — så siden virker også for sessioner, containeren ikke optog.
+
+**DevSeasonLoader (Core, delt med WinForms)**
+- `/meetings?year=` + `/sessions?year=`; pr. møde sessionerne med
+  `session_type` qualifying/race; hovedsessionen (`session_name`
+  "Qualifying"/"Race") foretrækkes frem for sprint. Testdage (Practice) og
+  fremtidige sessioner springes over.
+- Kørerlister: ét kald for hele sæsonen (`/drivers?session_key>=første&session_key<=sidste`),
+  nyeste række pr. nummer vinder (holdskifte, reserver får deres hold).
+  Tomt/fejl → kun sidste sessions liste (den oprindelige websideadfærd).
+- `/session_result` pr. GP → DevStats.DevPointsForSession. Tomt svar/404 =
+  **skipped** ("Uden resultatdata", fx aflyste Sakhir/Jeddah 2026). Fejl
+  (rate limit, 5xx) = **failed** — aldrig forvekslet med "ingen data".
+- Diskcache: `openf1_result_<session_key>.json`, kun ikke-tomme resultater
+  for sessioner der sluttede for mere end 2 timer siden.
+
+**OpenF1Client** — min. 400 ms mellem kald og højst 28 kald pr. rullende
+minut (OpenF1's gratis grænse er pr. sekund OG pr. minut; en sæson er ~25
+kald). 429 → Retry-After (højst 60 s), ellers 2 s·2ⁿ (loft 30 s), højst 6
+forsøg, ingen ventetid efter sidste forsøg. 404 → tomt array. Alle grænser
+kan sættes (tests).
+
+**DevService (server)** — diskcache i `data/cache/openf1/`; hele svaret i
+hukommelsen 20 min for indeværende sæson, 24 t for ældre. Svar med failed
+GP'er holdes kun 2 min, så næste besøg prøver igen. Samtidige forespørgsler
+på samme år/tilstand deler ét hent. En kold sæson tager ~1 min, så API'et
+venter højst 8 s og svarer ellers **202** med fremdrift; siden spørger igen
+hvert 1,5 s (ingen forespørgsel rammer en proxy-timeout). En fejlet hentning
+returneres som 502 i 20 s, derefter prøves igen. Indeværende sæson varmes op
+ved start og 45 min efter hver afsluttet optagelse (OpenF1 er typisk
+opdateret da).
+
+**Kontrakt** — `GET /api/dev?year=2026&mode=quali|race` (år 2023–nu, ellers
+400; OpenF1-fejl → 502 `{ok:false,error}`; hentes stadig → 202
+`{"loading":true,"progress":"Henter resultater… (7/24)"}`; klar → 200):
+
+```json
+{ "year": 2026, "mode": "quali",
+  "gps": [{ "label": "Melbourne", "name": "Australian Grand Prix", "date": "2026-03-07" }],
+  "skipped": ["Sakhir"], "failed": [],
+  "drivers": [{ "dn": "44", "tla": "HAM", "name": "Lewis HAMILTON", "team": "Ferrari",
+                "colour": "#ED1131", "points": [{ "s": 0.3, "m": 21.4, "note": null }, null] }],
+  "teams": [{ "name": "Mercedes", "colour": "#00D7B6", "avg": 0.26, "count": 38 }],
+  "defaultHidden": ["…"], "generatedUtc": "…" }
+```
+
+`points[i]` hører til `gps[i]`; `null` = kørte ikke; `s` null + `note`
+("DNF", "+1 omg.", "–") = hul i grafen. `teams` er sorteret bedst først
+(snit af alle kørernes gyldige punkter); `defaultHidden` = alle undtagen
+bedste og dårligste (som den gamle side). I tilstanden Hold viser siden i
+stedet snittet af bedste bil pr. GP (regnes i browseren).
+
+**Siden (wwwroot/analyse.html, js/analyse.js, js/devchart.js)**
+- Filtre i én række: Sæson · Kvalifikation|Løb · Kørere|Hold (bedste bil) ·
+  Zoom · Graf|Tabel. Hold-chips (klik vælg/fravælg; Vis alle · Bedste og
+  dårligste · Ryd). Tilstand i URL'en (`?year&mode&per&view&zoom&teams`),
+  valget pr. sæson i localStorage `f1dev:sel:<år>`, zoom i `f1dev:zoom`.
+- Kørere: én linje pr. kører i holdfarve; holdets bedste kører over sæsonen
+  fuld linje, makker stiplet. Hold: bedste bil pr. GP.
+- Y = gab til pole/vinderen, 0 øverst (højere er bedre). Zoom klipper ved
+  max(p90·1,25, min+0,5); punkter udenfor tegnes som nedadvendt trekant på
+  kanten. Aksedecimaler følger trinnet (0,25 → "+0.25 s").
+- Mærker: linje 2 px, punkt r 4,5 med 2 px ring i fladens farve. Endelabels
+  med føringslinje når ≤ 8 serier. Krydsmarkør + tooltip med alle synlige
+  serier (s og meter); ←/→ flytter markøren; tabelvisning med alle værdier.
+- **Punktformer (sekundær kodning):** holdfarverne kolliderer (Ferrari/Audi
+  ΔE 1,5; Haas/Cadillac 4,8). Afstand = mindste OKLab-ΔE under normalt syn,
+  protan og deutan (Machado; CVD vægtet ×1,6); "farvelignende" < 25.
+  Formerne er ● ■ ◆ ▲ + × (▼ er forbeholdt punkter uden for zoom). Da 7 hold
+  i 2026 er parvis farvelignende og der kun er 6 former, vælges den største
+  tærskel, hvor alle par under den kan få hver sin form (graffarvning med
+  backtracking); kun det mest forskellige par deler (Haas/Williams, 24,5).
+  Formen følger holdet for hele sæsonen — aldrig filteret eller rækkefølgen.
+- Tekst bærer aldrig seriefarven; identitet = farvestreg + form ved siden af.
+
 ## Adgang
 
-- Admin (/admin, /api/* undtagen /api/public): klient-IP i ADMIN_ALLOW eller
-  ADMIN_TOKEN (?key / Bearer / cookie f1admin).
+- Admin (/admin, /api/* undtagen /api/public og /api/dev): klient-IP i
+  ADMIN_ALLOW eller ADMIN_TOKEN (?key / Bearer / cookie f1admin).
+- /analyse og /api/dev følger visningens regler (offentlige data fra OpenF1).
 - Forespørgsler med X-Forwarded-For/X-Real-IP fra ikke-betroet afsender regnes
   som udefra (aldrig admin via IP). Fra TRUSTED_PROXIES bruges X-Real-IP,
   ellers højre-mest ikke-betroede hop i X-Forwarded-For.
@@ -213,13 +300,17 @@ En ulæselig fil overskrives aldrig (nyt navn `_2`).
 
 ## Validering
 
-- `tests/CoreTests` — 240 checks: merge (inkl. index-patches), .z, protokol-
+- `tests/CoreTests` — 277 checks: merge (inkl. index-patches), .z, protokol-
   parsing, SseServer (filtre, X-Accel-Buffering, profiler, Range), optager-
   genåbning, RecordingManager-livscyklus, RecordingFilter, F1Login-parsing
   (inkl. RFC 7636 PKCE-vektor), TokenManager (auto-login, fornyelse, backoff,
-  persistens), F1Schedule, ArchiveConverter, + v1-tests.
+  persistens), F1Schedule, ArchiveConverter, OpenF1Client (429/Retry-After/
+  backoff/vindue/afstand) og DevSeasonLoader mod falsk OpenF1 (sessionsvalg,
+  sprint fravalgt, skipped vs. failed, kørerlister, diskcache, JSON-form),
+  + v1-tests.
 - `tests/ServerTests` — CIDR, betroede proxies, X-Forwarded-For-spoofing.
-- `tests/web/merge.test.mjs` — JS-merge = C#-merge.
+- `tests/web/*.test.mjs` (`node --test tests/web/*.test.mjs`) — JS-merge =
+  C#-merge; udviklingsgrafens formtildeling, aksedecimaler og formatering.
 - Live-verificeret 4/11-2026 herfra: negotiate/ws/subscribe mod F1, snapshot
   (26 topics), login trin 1–2 mod id.formula1.com. End-to-end mod lokal mock
   af SignalR Core: optagelse åbnes, skrives, forsinket live/afspilning i browser.
@@ -256,9 +347,11 @@ Sync mod TV: Play/Pause + slider + ±10/±60 s + hastighed 0,5–10×.
 
 ### Historik-fane (OpenF1) og Development-fane
 
-OpenF1Client (throttle 400 ms, 429-retry), HistoryStats/DevStats er 1:1-porte
-af websidens f1.js. PARITETSREGEL: ændres beregninger/labels på websiden,
-skal HistoryStats.cs/DevStats.cs opdateres tilsvarende — og omvendt.
+OpenF1Client (se Udvikling), HistoryStats/DevStats er 1:1-porte af websidens
+f1.js. Development-fanen henter via DevSeasonLoader — samme kode som
+containerens /analyse — med diskcache i `<app>/cache`. PARITETSREGEL: ændres
+beregninger/labels på websiden, skal HistoryStats.cs/DevStats.cs opdateres
+tilsvarende — og omvendt.
 
 ## Næste pas (forslag)
 

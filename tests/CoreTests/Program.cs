@@ -906,5 +906,200 @@ var carJson = """{"Entries":{"1":{"Speed":312}}}""";
     Check(feedLine is not null && feedLine.Contains("TimingData") && !feedLine.Contains("CarData"), "excluded topic not sent, next topic sent");
 }
 
+// ---------- OpenF1Client: rate limit, backoff, 404 ----------
+{
+    // 429 uden Retry-After → eksponentiel backoff, derefter svar
+    var n = 0;
+    using (var api = new OpenF1Client(new FakeHttp(_ => ++n <= 2 ? FakeHttp.Json("[]", 429) : FakeHttp.Json("""[{"a":1}]""")))
+           { MinSpacing = TimeSpan.Zero, BackoffBase = TimeSpan.FromMilliseconds(20) })
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var arr = await api.GetArrayAsync("/x");
+        Check(arr.Count == 1 && n == 3, "openf1 429 retried until 200");
+        Check(sw.ElapsedMilliseconds >= 55, $"openf1 exponential backoff 20+40 ms [{sw.ElapsedMilliseconds} ms]");
+    }
+
+    // Retry-After vinder over backoff
+    n = 0;
+    using (var api = new OpenF1Client(new FakeHttp(_ =>
+           {
+               if (++n > 1) return FakeHttp.Json("[]");
+               var r = FakeHttp.Json("[]", 429);
+               r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMilliseconds(250));
+               return r;
+           })) { MinSpacing = TimeSpan.Zero, BackoffBase = TimeSpan.FromSeconds(20) })
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await api.GetArrayAsync("/x");
+        Check(sw.ElapsedMilliseconds is >= 230 and < 5000, $"openf1 honours Retry-After [{sw.ElapsedMilliseconds} ms]");
+    }
+
+    // Giver op efter MaxAttempts — uden at vente efter sidste forsøg
+    n = 0;
+    using (var api = new OpenF1Client(new FakeHttp(_ => { n++; return FakeHttp.Json("[]", 429); }))
+           { MinSpacing = TimeSpan.Zero, BackoffBase = TimeSpan.FromMilliseconds(1), MaxAttempts = 3 })
+    {
+        var threw = false;
+        try { await api.GetArrayAsync("/x"); } catch (InvalidOperationException) { threw = true; }
+        Check(threw && n == 3, "openf1 gives up after MaxAttempts");
+    }
+
+    // 404 = ingen rækker; andre fejl kaster
+    using (var api = new OpenF1Client(new FakeHttp(p => p.Contains("missing") ? FakeHttp.Json("""{"detail":"No results found."}""", 404)
+                                                                               : FakeHttp.Json("boom", 500))) { MinSpacing = TimeSpan.Zero })
+    {
+        Eq((await api.GetArrayAsync("/missing")).Count, 0, "openf1 404 -> empty array");
+        var threw = false;
+        try { await api.GetArrayAsync("/x"); } catch (InvalidOperationException ex) { threw = ex.Message.Contains("500"); }
+        Check(threw, "openf1 500 -> InvalidOperationException");
+    }
+
+    // Rullende vindue: 2 kald pr. 400 ms → 3. kald venter på det første
+    var fw = new FakeHttp(_ => FakeHttp.Json("[]"));
+    using (var api = new OpenF1Client(fw) { MinSpacing = TimeSpan.Zero, MaxPerWindow = 2, Window = TimeSpan.FromMilliseconds(400) })
+    {
+        for (var i = 0; i < 3; i++) await api.GetArrayAsync("/x");
+        Check(fw.At[1] - fw.At[0] < 150 && fw.At[2] - fw.At[0] >= 380, $"openf1 sliding window [{fw.At[1] - fw.At[0]} / {fw.At[2] - fw.At[0]} ms]");
+    }
+
+    // Standardafstand mellem kald (400 ms)
+    var fs = new FakeHttp(_ => FakeHttp.Json("[]"));
+    using (var api = new OpenF1Client(fs))
+    {
+        await api.GetArrayAsync("/a");
+        await api.GetArrayAsync("/b");
+        Check(fs.At[1] - fs.At[0] >= 380, $"openf1 min spacing 400 ms [{fs.At[1] - fs.At[0]} ms]");
+    }
+}
+
+// ---------- DevSeasonLoader (OpenF1 via falsk HttpMessageHandler) ----------
+{
+    var future = DateTime.UtcNow.AddDays(30).ToString("yyyy-MM-dd'T'HH:mm:ss'+00:00'", System.Globalization.CultureInfo.InvariantCulture);
+    var meetings = $$"""
+[{"meeting_key":2,"meeting_name":"Chinese Grand Prix","circuit_short_name":"Shanghai","date_start":"2026-03-13T03:30:00+00:00"},
+ {"meeting_key":1,"meeting_name":"Australian Grand Prix","circuit_short_name":"Melbourne","date_start":"2026-03-06T01:30:00+00:00"},
+ {"meeting_key":0,"meeting_name":"Pre-Season Testing","circuit_short_name":"Sakhir","date_start":"2026-02-11T07:00:00+00:00"},
+ {"meeting_key":3,"meeting_name":"Bahrain Grand Prix","circuit_short_name":"Sakhir","date_start":"2026-04-10T11:30:00+00:00"},
+ {"meeting_key":4,"meeting_name":"Saudi Arabian Grand Prix","circuit_short_name":"Jeddah","date_start":"2026-04-17T13:30:00+00:00"},
+ {"meeting_key":5,"meeting_name":"Future Grand Prix","circuit_short_name":"Future","date_start":"{{future}}"}]
+""";
+    var sessions = $$"""
+[{"session_key":9001,"meeting_key":0,"session_type":"Practice","session_name":"Day 1","date_start":"2026-02-11T07:00:00+00:00","date_end":"2026-02-11T16:00:00+00:00"},
+ {"session_key":1001,"meeting_key":1,"session_type":"Qualifying","session_name":"Qualifying","date_start":"2026-03-07T05:00:00+00:00","date_end":"2026-03-07T06:00:00+00:00"},
+ {"session_key":1002,"meeting_key":1,"session_type":"Race","session_name":"Race","date_start":"2026-03-08T04:00:00+00:00","date_end":"2026-03-08T06:00:00+00:00"},
+ {"session_key":2003,"meeting_key":2,"session_type":"Qualifying","session_name":"Qualifying","date_start":"2026-03-14T07:00:00+00:00","date_end":"2026-03-14T08:00:00+00:00"},
+ {"session_key":2001,"meeting_key":2,"session_type":"Qualifying","session_name":"Sprint Qualifying","date_start":"2026-03-13T07:30:00+00:00","date_end":"2026-03-13T08:15:00+00:00"},
+ {"session_key":2002,"meeting_key":2,"session_type":"Race","session_name":"Sprint","date_start":"2026-03-14T03:00:00+00:00","date_end":"2026-03-14T04:00:00+00:00"},
+ {"session_key":2004,"meeting_key":2,"session_type":"Race","session_name":"Race","date_start":"2026-03-15T07:00:00+00:00","date_end":"2026-03-15T09:00:00+00:00"},
+ {"session_key":3001,"meeting_key":3,"session_type":"Qualifying","session_name":"Qualifying","date_start":"2026-04-11T15:00:00+00:00","date_end":"2026-04-11T16:00:00+00:00"},
+ {"session_key":4001,"meeting_key":4,"session_type":"Qualifying","session_name":"Qualifying","date_start":"2026-04-18T17:00:00+00:00","date_end":"2026-04-18T18:00:00+00:00"},
+ {"session_key":5001,"meeting_key":5,"session_type":"Qualifying","session_name":"Qualifying","date_start":"{{future}}","date_end":"{{future}}"}]
+""";
+    var results = new Dictionary<string, string>
+    {
+        ["1001"] = """[{"driver_number":1,"position":1,"gap_to_leader":null,"duration":[80.5,80.2,80.0]},{"driver_number":44,"position":2,"gap_to_leader":null,"duration":[80.9,80.6,80.3]},{"driver_number":31,"position":3,"gap_to_leader":null,"duration":[81.0,null,null]}]""",
+        ["2001"] = """[{"driver_number":44,"position":1,"gap_to_leader":null,"duration":[78.0]},{"driver_number":1,"position":2,"gap_to_leader":null,"duration":[78.9]}]""",
+        ["2003"] = """[{"driver_number":1,"position":1,"gap_to_leader":null,"duration":[79.5,79.2,79.0]},{"driver_number":44,"position":2,"gap_to_leader":null,"duration":[79.9,79.6,79.5]}]""",
+        ["1002"] = """[{"driver_number":1,"position":1,"number_of_laps":58,"gap_to_leader":null,"duration":5000.0},{"driver_number":44,"position":2,"number_of_laps":58,"gap_to_leader":5.0}]""",
+        ["2002"] = """[{"driver_number":1,"position":1,"number_of_laps":19,"gap_to_leader":null,"duration":1900.0},{"driver_number":44,"position":2,"number_of_laps":19,"gap_to_leader":9.9}]""",
+        ["2004"] = """[{"driver_number":44,"position":1,"number_of_laps":56,"gap_to_leader":null,"duration":5400.0},{"driver_number":1,"position":2,"number_of_laps":56,"gap_to_leader":2.0}]""",
+    };
+    // Nyeste række først: en ældre række må ikke overskrive holdskiftet
+    var driversRange = """
+[{"session_key":2003,"driver_number":44,"name_acronym":"HAM","full_name":"Lewis HAMILTON","team_name":"Ferrari","team_colour":"ED1131"},
+ {"session_key":2003,"driver_number":1,"name_acronym":"VER","full_name":"Max VERSTAPPEN","team_name":"Red Bull Racing","team_colour":"4781D7"},
+ {"session_key":1001,"driver_number":1,"name_acronym":"VER","full_name":"Max VERSTAPPEN","team_name":"Red Bull Racing","team_colour":"4781D7"},
+ {"session_key":1001,"driver_number":44,"name_acronym":"HAM","full_name":"Lewis HAMILTON","team_name":"Mercedes","team_colour":"00D7B6"},
+ {"session_key":1001,"driver_number":31,"name_acronym":"OCO","full_name":"Esteban OCON","team_name":"Haas F1 Team","team_colour":"9C9FA2"}]
+""";
+    var drivers2004 = """
+[{"session_key":2004,"driver_number":1,"name_acronym":"VER","full_name":"Max VERSTAPPEN","team_name":"Red Bull Racing","team_colour":"4781D7"},
+ {"session_key":2004,"driver_number":44,"name_acronym":"HAM","full_name":"Lewis HAMILTON","team_name":"Ferrari","team_colour":"ED1131"}]
+""";
+    var rangeEmpty = false;
+    var fake = new FakeHttp(path =>
+    {
+        if (path == "/v1/meetings?year=2026") return FakeHttp.Json(meetings);
+        if (path == "/v1/sessions?year=2026") return FakeHttp.Json(sessions);
+        if (path.StartsWith("/v1/drivers?session_key>=")) return rangeEmpty ? FakeHttp.Json("""{"detail":"No results found."}""", 404) : FakeHttp.Json(driversRange);
+        if (path == "/v1/drivers?session_key=2004") return FakeHttp.Json(drivers2004);
+        if (path.StartsWith("/v1/session_result?session_key="))
+        {
+            var key = path.Split('=')[1];
+            if (key == "4001") return FakeHttp.Json("Internal Server Error", 500);
+            return results.TryGetValue(key, out var body) ? FakeHttp.Json(body) : FakeHttp.Json("""{"detail":"No results found."}""", 404);
+        }
+        return FakeHttp.Json("[]", 404);
+    });
+    var cacheDir = Path.Combine(Path.GetTempPath(), "slqf1test_devseason");
+    if (Directory.Exists(cacheDir)) Directory.Delete(cacheDir, true);
+    using var api = new OpenF1Client(fake) { MinSpacing = TimeSpan.Zero, MaxPerWindow = 1000 };
+
+    var progress = new List<string>();
+    var q = await DevSeasonLoader.LoadAsync(api, 2026, true, cacheDir, progress.Add, CancellationToken.None);
+    Eq(string.Join(",", q.GpLabels), "Melbourne,Shanghai", "dev season: past quali GPs in date order (testing + future left out)");
+    Eq(string.Join(",", q.Skipped), "Sakhir", "dev season: GP without results is skipped");
+    Eq(string.Join(",", q.FailedGps), "Jeddah", "dev season: fetch error listed as failed, not skipped");
+    var p44 = q.Series.First(x => x.Dn == "44").Points;
+    Eq(Math.Round(p44[0]!.GapS!.Value, 3), 0.3, "dev season: quali gap from Q-times");
+    Eq(Math.Round(p44[1]!.GapS!.Value, 3), 0.5, "dev season: main Qualifying preferred over Sprint Qualifying");
+    Check(p44[0]!.GapM is > 0, "dev season: meters via track length");
+    Check(!fake.Calls.Any(c => c.EndsWith("session_key=2001") || c.EndsWith("session_key=5001")), "dev season: sprint + future sessions not fetched");
+    Check(fake.Calls.Contains("/v1/drivers?session_key>=1001&session_key<=4001"), "dev season: one season-wide drivers query");
+    Eq(q.TeamOf("44"), "Ferrari", "dev season: newest drivers row wins (team change)");
+    Eq(q.TeamOf("31"), "Haas F1 Team", "dev season: reserve from an earlier session keeps his team");
+    Check(q.Series.First(x => x.Dn == "31").Points[1] is null, "dev season: absent driver -> null point");
+    Check(progress[^1].Contains("Sakhir") && progress[^1].Contains("Jeddah"), "dev season: final status names skipped + failed");
+
+    var j = DevSeasonLoader.ToJson(q);
+    Eq(j["mode"], "quali", "dev json: mode");
+    Eq(j["gps"]![1]!["name"], "Chinese Grand Prix", "dev json: GP name");
+    Eq(j["gps"]![0]!["date"], "2026-03-07", "dev json: GP date = session date");
+    Eq(string.Join(",", j["teams"]!.AsArray().Select(t => t!["name"]!.ToString())), "Red Bull Racing,Ferrari,Haas F1 Team", "dev json: teams best first");
+    Eq(string.Join(",", j["defaultHidden"]!.AsArray().Select(x => x!.ToString())), "Ferrari", "dev json: default shows best + worst team");
+    var d31 = j["drivers"]!.AsArray().First(d => d!["dn"]!.ToString() == "31")!;
+    Eq(d31["colour"], "#9C9FA2", "dev json: colour gets #");
+    Check(d31["points"]![1] is null && d31["points"]![0]!["s"] is not null, "dev json: missing point serialised as null");
+    Eq(j["skipped"]![0], "Sakhir", "dev json: skipped list");
+    Eq(j["failed"]![0], "Jeddah", "dev json: failed list");
+
+    var before = fake.Calls.Count(c => c.Contains("/session_result"));
+    await DevSeasonLoader.LoadAsync(api, 2026, true, cacheDir, null, CancellationToken.None);
+    Eq(fake.Calls.Count(c => c.Contains("/session_result")) - before, 2, "dev season: finished results from disk cache (only Sakhir + Jeddah refetched)");
+    Check(File.Exists(Path.Combine(cacheDir, "openf1_result_1001.json")) && !File.Exists(Path.Combine(cacheDir, "openf1_result_3001.json")),
+        "dev season: only non-empty results cached");
+
+    rangeEmpty = true;
+    var r = await DevSeasonLoader.LoadAsync(api, 2026, false, null, null, CancellationToken.None);
+    Eq(string.Join(",", r.GpLabels), "Melbourne,Shanghai", "dev race: races in date order");
+    Eq(r.Series.First(x => x.Dn == "1").Points[1]!.GapS, 2, "dev race: main Race preferred over Sprint");
+    Eq(r.Series.First(x => x.Dn == "44").Points[1]!.GapS, 0, "dev race: winner gap 0");
+    Check(fake.Calls.Contains("/v1/drivers?session_key=2004"), "dev race: drivers fall back to the last session");
+    Eq(r.TeamOf("44"), "Ferrari", "dev race: team from fallback list");
+    Check(r.Skipped.Count == 0 && r.FailedGps.Count == 0, "dev race: nothing skipped or failed");
+}
+
 Console.WriteLine(fails > 0 ? $"\n{fails} FAILURES" : "\nALL CORE TESTS PASSED");
 Environment.Exit(fails > 0 ? 1 : 0);
+
+/// Falsk HTTP-handler til OpenF1-tests: svarer via en funktion og logger
+/// stier (URL-dekodet) og tidspunkter (ms siden oprettelse).
+sealed class FakeHttp : HttpMessageHandler
+{
+    private readonly Func<string, HttpResponseMessage> _respond;
+    private readonly System.Diagnostics.Stopwatch _sw = System.Diagnostics.Stopwatch.StartNew();
+    public List<string> Calls { get; } = new();
+    public List<long> At { get; } = new();
+
+    public FakeHttp(Func<string, HttpResponseMessage> respond) => _respond = respond;
+
+    public static HttpResponseMessage Json(string body, int status = 200) =>
+        new((System.Net.HttpStatusCode)status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var path = Uri.UnescapeDataString(request.RequestUri!.PathAndQuery);
+        lock (Calls) { Calls.Add(path); At.Add(_sw.ElapsedMilliseconds); }
+        return Task.FromResult(_respond(path));
+    }
+}

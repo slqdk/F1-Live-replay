@@ -1,4 +1,4 @@
-// node --test tests/web — samme merge-regler som serveren (StateStore.DeepMerge)
+// node --test tests/web/*.test.mjs — samme merge-regler som serveren (StateStore.DeepMerge)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deepMerge, listOf, isIndexPatch } from "../../src/SlqF1Live.Server/wwwroot/js/merge.js";
