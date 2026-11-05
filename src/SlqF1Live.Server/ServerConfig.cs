@@ -35,6 +35,15 @@ public sealed class ServerConfig
     public bool TeamRadioDownload { get; init; } = true;
     public int LogRetentionDays { get; init; } = 14;
 
+    /// Teamradio som tekst (whisper.cpp i containeren, se TranscriptService).
+    public bool Transcribe { get; init; } = true;
+    public string TranscribeModel { get; init; } = "small.en";
+    public string TranscribeLanguage { get; init; } = "en";
+    /// 0 = automatisk (antal kerner, højst 4).
+    public int TranscribeThreads { get; init; }
+    public string WhisperDir { get; init; } = Path.Combine(AppContext.BaseDirectory, "whisper");
+    public string ModelsDir => Path.Combine(DataDir, "models");
+
     public static ServerConfig Load()
     {
         var dataDir = Env("DATA_DIR") ?? "/data";
@@ -77,10 +86,18 @@ public sealed class ServerConfig
             ArchiveDownload = Bool("ARCHIVE_DOWNLOAD", "archiveDownload", true),
             TeamRadioDownload = Bool("TEAMRADIO_DOWNLOAD", "teamRadioDownload", true),
             LogRetentionDays = int.TryParse(Get("LOG_RETENTION_DAYS", "logRetentionDays"), out var lr) ? lr : 14,
+            Transcribe = Bool("TRANSCRIBE", "transcribe", true),
+            TranscribeModel = Get("TRANSCRIBE_MODEL", "transcribeModel") is { } tm &&
+                              System.Text.RegularExpressions.Regex.IsMatch(tm, "^[a-z0-9][a-z0-9._-]{0,40}$") ? tm : "small.en",
+            TranscribeLanguage = Get("TRANSCRIBE_LANGUAGE", "transcribeLanguage") is { } tl &&
+                                 System.Text.RegularExpressions.Regex.IsMatch(tl, "^([a-z]{2,3}|auto)$") ? tl : "en",
+            TranscribeThreads = int.TryParse(Get("TRANSCRIBE_THREADS", "transcribeThreads"), out var tt) ? Math.Clamp(tt, 0, 32) : 0,
+            WhisperDir = Get("WHISPER_DIR", "whisperDir") ?? Path.Combine(AppContext.BaseDirectory, "whisper"),
         };
         if (Get("LOGIN_USER_AGENT", "loginUserAgent") is { Length: > 0 } ua) SlqF1Live.Core.F1Login.UserAgent = ua;
         // Kun til test mod en lokal mock af F1's SignalR Core-server
         if (Get("F1_LIVETIMING_URL", "f1LivetimingUrl") is { Length: > 0 } lt) SlqF1Live.Core.F1FeedClient.BaseUrl = lt;
+        if (Get("F1_STATIC_URL", "f1StaticUrl") is { Length: > 0 } su) SlqF1Live.Core.F1ArchiveClient.StaticBase = su;
         return cfg;
     }
 

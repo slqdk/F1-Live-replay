@@ -10,6 +10,9 @@ det i browseren, synkront med TV'et, også når du ser løbet forskudt.
   officielle arkiv, og teamradio hentes som mp3.
 - **Egen visning til TV, tablet og telefon** med timing-tårn, gab, dæk,
   sektorer, race control, vejr, teamradio og banekort.
+- **Teamradio som tekst.** F1 sender kun lydfiler, så containeren skriver
+  selv radioen ned (whisper.cpp på CPU'en, ingen sky). Teksten står under
+  hvert klip, og du vælger, hvilke køreres radio du vil se.
 - **Tre tilstande:** Live, Forsinket (x sekunder bag live) og Afspilning
   (søg, hastighed, ±1/10/60 s og *Sync til start*).
 - **Auto-login til F1 TV.** Tokenet holder kun ca. 4 dage, og containeren
@@ -86,6 +89,24 @@ Shift+←/→ = ±10 s (i Forsinket justerer pilene forsinkelsen).
 Bogmærke til TV'et: `https://f1live.slq.dk/?mode=delay`, eller
 `?mode=replay&file=<fil>.f1rec&t=<sekunder>`.
 
+### Teamradio
+
+Teksten dukker op under klippet et par sekunder efter, at F1 har lagt
+lydfilen ud. Indtil da står der *Skriver det ned…*. Klip med kun støj
+får *Ingen tale i klippet.* Teksten er maskinlæst: navne og tal er som
+regel rigtige, men læs den som et udkast, ikke et citat.
+
+- **Kørere: alle** åbner kørerfilteret. Klik på en kører for at skjule eller
+  vise vedkommendes radio. Valget huskes i browseren og gælder også
+  *Afspil nye automatisk*.
+- I Afspilning vises kun radio frem til det sted, du er nået i optagelsen.
+- Første gang henter containeren modellen (~470 MB) til `data/models/`.
+  Ældre optagelser og importerede sessioner får tekst bagefter, i
+  baggrunden og med lav CPU-prioritet.
+- Det kræver ca. 700 MB RAM ekstra, mens et klip skrives ned. Giv
+  LXC'en mindst 2 GB. Slå det fra med `TRANSCRIBE=false` i `.env`.
+- Adminsiden viser status under *Jobs og medier*.
+
 ### Udvikling over sæsonen
 
 Linket **Udvikling** øverst på visningen (eller `https://f1live.slq.dk/analyse`).
@@ -145,6 +166,7 @@ data/
     2026-11-08_Sao_Paulo_Grand_Prix_Race/
       meta.json                    status, linjer, topics, arkivstatus
       TeamRadio/*.mp3              teamradio (hentet live)
+      TeamRadio/transcripts.json   teamradio som tekst (whisper.cpp)
       archive/*.jsonStream, *.json F1's officielle arkiv (efter sessionen)
 ```
 
@@ -178,6 +200,7 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 | `GET /recordings/<fil>` | rå fil, `Range: bytes=N-` |
 | `GET /recordings/<fil>?profile=timing\|map\|tele&from=N` | let udgave + `X-Next-Offset` |
 | `GET /media/<session>/TeamRadio/<fil>.mp3` | teamradio |
+| `GET /media/<session>/TeamRadio/transcripts.json` | teamradio som tekst (`{clips: {<Path>: {text, speech}}}`) |
 | `GET /api/public` | feed/optagelse/næste sessioner |
 | `GET /analyse` | udviklingssiden |
 | `GET /api/dev?year=2026&mode=quali\|race` | sæsonens GP'er, kørere med gab (s og m), hold bedst først |
@@ -187,7 +210,7 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 
 ```bash
 dotnet run --project tests/CoreTests            # 277 checks (Core)
-dotnet run --project tests/ServerTests          # adgangskontrol
+dotnet run --project tests/ServerTests          # adgangskontrol + teamradio-tekst
 node --test tests/web/*.test.mjs                # merge-regler + udviklingsgrafen
 dotnet run --project src/SlqF1Live.Server       # lokalt: DATA_DIR=./data PORT=8137
 ```
@@ -196,3 +219,9 @@ dotnet run --project src/SlqF1Live.Server       # lokalt: DATA_DIR=./data PORT=8
 - `SlqF1Live.Server.sln`: server + tests (.NET 10).
 - `F1LIVE_FRAMEWORK.md`: protokol, merge-regler, filformat og designbeslutninger.
   Læs det før ændringer.
+
+## Licenser for tredjepart
+
+Teamradio-tekst bruger [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+(MIT), OpenAI's Whisper-modeller (MIT) og Silero VAD (MIT). Modellerne
+hentes fra Hugging Face første gang og ligger i `data/models/`.

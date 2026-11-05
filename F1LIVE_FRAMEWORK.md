@@ -10,7 +10,7 @@ f1/index.html + js/f1.js mod OpenF1 — er uafhængig og beskrives ikke her.)
 F1 SignalR Core ─ws─▶ SlqF1Live.Server (Docker i Proxmox-LXC) ─SSE─▶ browser
 livetiming.formula1.com  :8137 bag Nginx Proxy Manager (f1live.slq.dk)
                           ├─ optager hver session → data/recordings/*.f1rec
-                          ├─ teamradio-mp3 + F1-arkiv efter sessionen
+                          ├─ teamradio-mp3 → tekst (whisper.cpp) + F1-arkiv efter sessionen
                           ├─ egen visning: /  (live / forsinket / afspilning)
                           ├─ udvikling: /analyse (kval./løb pr. hold, OpenF1)
                           └─ admin: /admin   (kun LAN/WireGuard)
@@ -39,6 +39,8 @@ Windows-app'en (WinForms) kører stadig selvstændigt med samme Core.
 | Server/ServerHost.cs | Ledningsføring, feed-styring efter plan, status |
 | Server/WebApi.cs | Adgangskontrol, statiske filer, /media, /api/* |
 | Server/MediaService.cs | Teamradio-kø, arkiv-jobs efter session, import/byg |
+| Server/TranscriptService.cs | Teamradio → tekst: VAD + whisper.cpp, transcripts.json, modelhentning |
+| Server/RadioText.cs | Prompt med kørernavne, VAD-parsing, lydkontekst, oprydning af whisper-output |
 | Server/DevService.cs | /api/dev: cache (disk + hukommelse), deling af samtidige hent, opvarmning |
 | Server/AccessControl.cs | CIDR, betroede proxies (NPM), admin-/visningsnøgler |
 | Server/wwwroot/js/* | merge.js (samme regler som C#), player.js, render.js, app.js |
@@ -136,7 +138,55 @@ En ulæselig fil overskrives aldrig (nyt navn `_2`).
   (sidstnævnte uden Closed-event — genstart fortsætter filen).
 - `recordings/<stem>/meta.json`: state (recording/closed/interrupted), linjer,
   bytes, topic-tællinger, telemetri ja/nej, arkivstatus.
-- `recordings/<stem>/TeamRadio/*.mp3`, `recordings/<stem>/archive/*`.
+- `recordings/<stem>/TeamRadio/*.mp3` (+ `transcripts.json`), `recordings/<stem>/archive/*`.
+
+## Teamradio som tekst (whisper.cpp)
+
+F1's feed har ingen udskrift — `TeamRadio.Captures[]` er kun `{Utc,
+RacingNumber, Path}` til en mp3. Containeren transskriberer derfor selv,
+lokalt på CPU'en (ingen sky, ingen API-nøgle):
+
+1. MediaService henter klippet (live straks; arkiv/import bagefter) og
+   melder `RadioSaved(mappe, Path, live)` → TranscriptService-køen.
+   Live-klip går forrest; resten tages med lav CPU-prioritet (nice 10).
+2. **VAD** (`whisper-vad-speech-segments`, Silero v5.1.2, ~40 ms): ingen tale
+   → ingen whisper (whisper "hører" ellers fx "Thank you." i ren motorstøj).
+3. **whisper-cli** (standard `small.en`): `-nt -np -sns -l en`, `--prompt`
+   = "F1 team radio. Box, box. Copy that." + sessionens kørernavne fra
+   DriverList (huskes i `data/models/driver-names.txt` til ældre klip), og
+   `-ac` skåret til talens slutning + 1 s (halverer tiden; 0 over 25 s).
+4. **Oprydning** (RadioText.Clean): lydbeskrivelser `[…] (…) *…*` fjernes,
+   kendte støj-hallucinationer alene → tom tekst, samme sætning > 3 gange
+   i træk → 3, højst 600 tegn.
+5. **`recordings/<stem>/TeamRadio/transcripts.json`**, skrevet atomisk (tmp +
+   omdøb): `{"version":1,"clips":{"<Path>":{"text","speech","model","ms","at"
+   [,"error":true]}}}`. Nøgle = capture-`Path`. `speech:false` = kun støj.
+   `error` = fejlede; prøves igen ved næste opstart (scanning efter klip uden
+   tekst, nyeste optagelser først).
+
+- Serveres via `/media/<stem>/TeamRadio/transcripts.json` med `no-cache`;
+  findes filen ikke endnu → 200 `{"version":1,"clips":{}}` (ikke 404).
+- Modeller hentes første gang til `data/models/` fra Hugging Face
+  (`ggerganov/whisper.cpp`, `ggml-org/whisper-vad`), via `.part` + kontrol
+  af ggml-magic "lmgg"; fejl → nyt forsøg om 2, 4 … 60 min.
+- Målt på 2 kerner: VAD 0,04 s + whisper ~3 s pr. klip (small.en), ~700 MB
+  RAM mens den kører. `large-v3-turbo` er bedre, men ~45 s pr. klip på CPU.
+- `/api/public` → `transcribe: {enabled, ready, model}`; `/api/status` →
+  også `state, done, failed, queued, avgMs, threads, lastError`.
+- Slået fra hvis `TRANSCRIBE=false`, `TEAMRADIO_DOWNLOAD=false` eller
+  programmerne mangler (fx `dotnet run` uden `WHISPER_DIR`).
+
+**Visningen** henter `transcripts.json` hvert 4. s (live/forsinket), mens et
+klip fra de sidste 3 min mangler tekst — ellers ikke. Afspilning: hvert 30. s
+mens der mangler tekst. Kun klip i den (afspillede) tilstand vises, så filen
+afslører intet om resten af sessionen. "Skriver det ned…" vises kun live/
+forsinket. **Kørerfilter**: chips pr. kører (holdkammerater sammen), skjulte
+TLA'er i localStorage `f1radioHidden`; filteret gælder også "Afspil nye
+automatisk".
+
+**Test** af hele kæden uden F1: `F1_LIVETIMING_URL` (mock af feedet) +
+`F1_STATIC_URL` (mock af static/ med mp3'er). Tokenet sendes kun til
+`*.formula1.com`.
 
 ## Visning af optagelser i browseren
 
@@ -297,6 +347,10 @@ stedet snittet af bedste bil pr. GP (regnes i browseren).
   ikke-root (UID 1654).
 - **Browser-afspilning** (valgt af Søren): hver browser afspiller selv; ingen
   serverside-afspillertilstand; ubegrænset antal klienter ved vilkårlige offsets.
+- **Teamradio-tekst med whisper.cpp som separate programmer** (ikke Whisper.net/
+  NuGet): bygges i Docker-image'et, kaldes pr. klip. Tekst i en sidefil pr.
+  optagelse frem for i .f1rec — optagelsen forbliver rå F1-data, og ældre/
+  importerede optagelser kan få tekst bagefter.
 
 ## Validering
 
@@ -308,12 +362,18 @@ stedet snittet af bedste bil pr. GP (regnes i browseren).
   backoff/vindue/afstand) og DevSeasonLoader mod falsk OpenF1 (sessionsvalg,
   sprint fravalgt, skipped vs. failed, kørerlister, diskcache, JSON-form),
   + v1-tests.
-- `tests/ServerTests` — CIDR, betroede proxies, X-Forwarded-For-spoofing.
+- `tests/ServerTests` — CIDR, betroede proxies, X-Forwarded-For-spoofing;
+  RadioText (prompt, VAD, lydkontekst, oprydning), transcripts.json og
+  TranscriptService mod falske whisper-programmer (shell-scripts).
 - `tests/web/*.test.mjs` (`node --test tests/web/*.test.mjs`) — JS-merge =
   C#-merge; udviklingsgrafens formtildeling, aksedecimaler og formatering.
 - Live-verificeret 4/11-2026 herfra: negotiate/ws/subscribe mod F1, snapshot
   (26 topics), login trin 1–2 mod id.formula1.com. End-to-end mod lokal mock
   af SignalR Core: optagelse åbnes, skrives, forsinket live/afspilning i browser.
+- Teamradio-tekst 5/11-2026: mock-feed + mock-static med syntetiske, støjede
+  radioklip (TTS): hentet → VAD → small.en → tekst i visningen live og i
+  afspilning (ingen klip efter afspilningspositionen). Rigtig F1-radio er
+  endnu ikke prøvet (static kræver token).
 - Ikke verificeret endnu (kræver live-session/legitimation): fuldt login med
   kode, telemetri-topics med token, arkiv-download med token. Første rigtige
   test: Brasilien FP1 fre. 6/11-2026 16:30.
@@ -360,3 +420,5 @@ tilsvarende — og omvendt.
 - live.js på f1.slq.dk: hent med `?profile=timing` + X-Next-Offset-haling.
 - Telemetri-panel i visningen (fart/gear/gas/bremse for valgt kører, profile=tele).
 - Komprimering af ældre optagelser (zstd/gzip) når de ikke længere afspilles ofte.
+- Teamradio-tekst på GPU'en (SLQ Hub) via et OpenAI-kompatibelt
+  `/v1/audio/transcriptions`-endpoint — giver plads til `large-v3-turbo`.

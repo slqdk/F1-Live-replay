@@ -27,6 +27,7 @@ public sealed partial class ServerHost : IDisposable
     public SseServer Server { get; }
     public AccessControl Access { get; }
     public DevService Dev { get; }
+    public TranscriptService Transcripts { get; }
     public HttpClient Http { get; }
     public DateTime StartedUtc { get; } = DateTime.UtcNow;
     public static string Version { get; } =
@@ -70,6 +71,8 @@ public sealed partial class ServerHost : IDisposable
         Rec = new RecordingManager(cfg.RecordingsDir, null, log.Info);
         Schedule = new ScheduleService(Http, cfg, log);
         Media = new MediaService(cfg, new F1ArchiveClient(Http, () => Tokens.Current), Rec, log, () => Tokens.Current);
+        Transcripts = new TranscriptService(cfg, log, DriverNames);
+        Media.RadioSaved += (dir, rel, live) => Transcripts.Enqueue(dir, rel, live);
         Server = new SseServer(cfg.Port, cfg.AllowOrigin, Store, () => Feed.Wanted ? Feed.LastStatus : "venter",
             () => Feed.Connected, cfg.RecordingsDir)
         {
@@ -153,6 +156,22 @@ public sealed partial class ServerHost : IDisposable
 
     private static string? PathOf(JsonNode? si) => si?["Path"] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
+    /// "Max Verstappen", "Charles Leclerc" … fra sessionens DriverList (prompt til whisper).
+    private IReadOnlyList<string> DriverNames()
+    {
+        var list = new List<string>();
+        if (Store.GetTopic("DriverList") is not JsonObject drivers) return list;
+        foreach (var (_, d) in drivers)
+        {
+            if (d is not JsonObject o) continue;
+            var first = o["FirstName"] is JsonValue f && f.TryGetValue<string>(out var fs) ? fs.Trim() : "";
+            var last = o["LastName"] is JsonValue l && l.TryGetValue<string>(out var ls) ? ls.Trim() : "";
+            var name = $"{first} {last}".Trim();
+            if (name.Length > 0) list.Add(name);
+        }
+        return list;
+    }
+
     public bool LiveSessionRunning()
         => Rec.IsRecording && Rec.SessionStatus is "Started" or "Inactive" or "Aborted" or "Finished";
 
@@ -202,6 +221,7 @@ public sealed partial class ServerHost : IDisposable
         Tokens.Load(Cfg.F1Token);
         Server.Start();
         Media.Start(ct);
+        Transcripts.Start(ct);
 
         try { await Schedule.RefreshAsync(ct); } catch (OperationCanceledException) { return; }
         try { await Schedule.PollStreamingAsync(ct); } catch (OperationCanceledException) { return; }
@@ -296,6 +316,7 @@ public sealed partial class ServerHost : IDisposable
             },
             ["streaming"] = Schedule.StreamingStatus,
             ["next"] = next,
+            ["transcribe"] = Transcripts.PublicStatus(),
             ["clients"] = Server.ClientCount,
         };
     }
@@ -331,6 +352,7 @@ public sealed partial class ServerHost : IDisposable
             ["radioWaitingForToken"] = Media.RadioParked,
             ["archivesPending"] = Media.PendingArchives,
         };
+        o["transcribe"] = Transcripts.AdminStatus();
         var jobs = new JsonArray();
         foreach (var j in Media.Jobs)
             jobs.Add(new JsonObject
@@ -392,6 +414,7 @@ public sealed partial class ServerHost : IDisposable
         Rec.Dispose();
         Server.Dispose();
         Dev.Dispose();
+        Transcripts.Dispose();
         Http.Dispose();
     }
 }

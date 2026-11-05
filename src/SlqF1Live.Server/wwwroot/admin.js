@@ -82,9 +82,15 @@ async function refresh() {
   kv($("nextKv"), (s.next || []).map((n) => [local(n.startUtc), esc(`${n.meeting}, ${n.name}`)]));
 
   const m = s.media || {};
+  const tx = s.transcribe || {};
   kv($("mediaKv"), [
     ["Teamradio hentet", esc(m.radioDownloaded)],
     m.radioWaitingForToken > 0 && ["Venter på token", esc(m.radioWaitingForToken)],
+    ["Teamradio som tekst", !tx.enabled ? `<span class="warn">${esc(tx.state || "fra")}</span>`
+      : `<span class="${tx.ready ? "ok" : "warn"}">${esc(tx.state)}</span> · whisper ${esc(tx.model)}, ${esc(tx.threads)} tråde`],
+    tx.enabled && ["Transskriberet", `${esc(tx.done)}${tx.avgMs ? ` · ${(tx.avgMs / 1000).toFixed(1).replace(".", ",")} s pr. klip` : ""}` +
+      `${tx.queued ? ` · ${esc(tx.queued)} i kø` : ""}${tx.failed ? ` · <span class="bad">${esc(tx.failed)} fejlede</span>` : ""}`],
+    tx.lastError && ["Seneste fejl", `<span class="bad">${esc(tx.lastError)}</span>`],
     ["Arkiver i kø", esc(m.archivesPending)],
     ["Optagelser", `${esc(s.disk?.recordings)} filer, ${mb(s.disk?.recordingsBytes)}`],
     ["Fri plads", mb(s.disk?.freeBytes)],

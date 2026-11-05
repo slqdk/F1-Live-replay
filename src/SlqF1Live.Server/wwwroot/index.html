@@ -64,7 +64,16 @@
     <section class="panel radio-panel" aria-labelledby="radioTitle">
       <div class="panel-head">
         <h2 id="radioTitle">Teamradio</h2>
+        <button type="button" id="radioFilterBtn" class="filter-btn" aria-expanded="false" aria-controls="radioFilter">Kørere: alle</button>
         <label class="toggle"><input type="checkbox" id="radioAuto"> Afspil nye automatisk</label>
+      </div>
+      <div id="radioFilter" class="radio-filter" hidden>
+        <div class="rf-actions">
+          <span>Vis teamradio fra</span>
+          <button type="button" data-rf="all">Alle</button>
+          <button type="button" data-rf="none">Ingen</button>
+        </div>
+        <div id="rfChips" class="rf-chips"></div>
       </div>
       <ol id="radio" class="radio"></ol>
       <audio id="audio" preload="none"></audio>

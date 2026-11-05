@@ -350,13 +350,22 @@ public sealed partial class ServerHost
         }
         var root = Path.GetFullPath(Cfg.RecordingsDir);
         var full = Path.GetFullPath(Path.Combine(root, rel));
+        if (full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
+            Path.GetFileName(full) == TranscriptFile.FileName && !File.Exists(full))
+        {
+            // Ingen tekst endnu — tomt svar frem for 404 (siden spørger, mens sessionen kører)
+            res.Headers["Cache-Control"] = "no-cache";
+            SendText(res, 200, "application/json; charset=utf-8", """{"version":1,"clips":{}}""");
+            return;
+        }
         if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !File.Exists(full) ||
             Path.GetFileName(full) == "meta.json" && !Access.IsAdmin(ctx.Request))
         {
             SendText(res, 404, "text/plain; charset=utf-8", "ikke fundet");
             return;
         }
-        res.Headers["Cache-Control"] = "max-age=86400";
+        // transcripts.json vokser under sessionen; lydfilerne ændrer sig aldrig
+        res.Headers["Cache-Control"] = Path.GetFileName(full) == TranscriptFile.FileName ? "no-cache" : "max-age=86400";
         await SendFileAsync(ctx, full);
     }
 

@@ -25,7 +25,10 @@ public sealed class MediaService
     private readonly LogBuffer _log;
     private readonly Func<string?> _token;
 
-    private sealed record RadioJob(string Url, string Target, int Attempt, DateTime NotBefore);
+    private sealed record RadioJob(string Url, string MediaDir, string Rel, bool Live, int Attempt, DateTime NotBefore)
+    {
+        public string Target => Path.Combine(MediaDir, Rel);
+    }
     private readonly Channel<RadioJob> _radio = Channel.CreateUnbounded<RadioJob>();
     private readonly ConcurrentDictionary<string, byte> _radioKnown = new();
     private readonly ConcurrentQueue<RadioJob> _radioParked = new();
@@ -44,6 +47,9 @@ public sealed class MediaService
         _log = log;
         _token = token;
     }
+
+    /// Et teamradioklip er gemt: (optagelsens mappe, sti som i Captures[].Path, live).
+    public event Action<string, string, bool>? RadioSaved;
 
     public int RadioDownloaded => _radioOk;
     public int RadioParked => _radioParked.Count;
@@ -65,7 +71,7 @@ public sealed class MediaService
         {
             var target = Path.Combine(current.MediaDir, rel);
             if (!_radioKnown.TryAdd(target, 0) || File.Exists(target)) continue;
-            _radio.Writer.TryWrite(new RadioJob(sessionPath.TrimEnd('/') + "/" + rel, target, 0, DateTime.UtcNow));
+            _radio.Writer.TryWrite(new RadioJob(sessionPath.TrimEnd('/') + "/" + rel, current.MediaDir, rel, true, 0, DateTime.UtcNow));
         }
     }
 
@@ -88,6 +94,7 @@ public sealed class MediaService
                 if (status == HttpStatusCode.OK)
                 {
                     Interlocked.Increment(ref _radioOk);
+                    RadioSaved?.Invoke(job.MediaDir, job.Rel, job.Live);
                     continue;
                 }
                 if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
@@ -205,7 +212,7 @@ public sealed class MediaService
                 {
                     var target = Path.Combine(mediaDir, rel);
                     if (File.Exists(target) || !_radioKnown.TryAdd(target, 0)) continue;
-                    _radio.Writer.TryWrite(new RadioJob(sessionPath.TrimEnd('/') + "/" + rel, target, 0, DateTime.UtcNow));
+                    _radio.Writer.TryWrite(new RadioJob(sessionPath.TrimEnd('/') + "/" + rel, mediaDir, rel, false, 0, DateTime.UtcNow));
                 }
             }
             return r;

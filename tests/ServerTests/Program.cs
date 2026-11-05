@@ -1,4 +1,5 @@
-// ServerTests — adgangskontrol bag Nginx Proxy Manager (CIDR, betroede proxies).
+// ServerTests — adgangskontrol bag Nginx Proxy Manager (CIDR, betroede proxies)
+// og teamradio-tekst (RadioText, transcripts.json, TranscriptService med falske whisper-programmer).
 
 using System.Net;
 using SlqF1Live.Server;
@@ -38,6 +39,114 @@ var (ip6, _) = ac2.ClientIp(IPAddress.Parse("30.11.0.103"), "6.6.6.6, 9.9.9.9", 
 Check(ip6.ToString() == "9.9.9.9", "spoofed leftmost XFF ignored");
 Check(!ac2.ViewRestricted, "view open by default");
 Check(new AccessControl("", null, "", "", "hemmelig").ViewRestricted, "VIEW_TOKEN restricts view");
+
+// ---------- Teamradio-tekst: rene hjælpere ----------
+Check(RadioText.Prompt(new[] { "Max Verstappen", "Charles  Leclerc", "max verstappen", "", "Kimi Antonelli" })
+      == "F1 team radio. Box, box. Copy that. Max Verstappen, Charles Leclerc, Kimi Antonelli.", "prompt: names deduped and normalised");
+Check(RadioText.Prompt(Array.Empty<string>()) == RadioText.BasePrompt, "prompt without names");
+Check(RadioText.Prompt(Enumerable.Range(0, 200).Select(i => $"Driver Number{i}")).Length <= RadioText.MaxPromptChars, "prompt capped");
+
+var vad1 = RadioText.ParseVad("\nDetected 1 speech segments:\nSpeech segment 0: start = 64.00, end = 550.00\n\n");
+Check(vad1 is { Count: 1 } && Math.Abs(vad1[0].Start - 0.64) < 1e-9 && Math.Abs(vad1[0].End - 5.5) < 1e-9, "vad: centiseconds to seconds");
+Check(RadioText.ParseVad("\nDetected 0 speech segments:\n\n") is { Count: 0 }, "vad: no speech");
+Check(RadioText.ParseVad("error: failed to read audio data") is null, "vad: unreadable output -> null");
+
+Check(RadioText.AudioContext(5.5) == (int)Math.Ceiling(6.5 * 50) + 64, "audio ctx follows speech end + 1 s");
+Check(RadioText.AudioContext(0) == 0 && RadioText.AudioContext(26) == 0, "full window when unknown or long");
+Check(RadioText.AudioContext(25) <= 1500, "audio ctx capped at 1500");
+
+Check(RadioText.Clean(" Box, box.\n Confirm. ") == "Box, box. Confirm.", "clean: lines joined");
+Check(RadioText.Clean("[MUSIC PLAYING]") == "" && RadioText.Clean("(machinery whirring)") == "", "clean: sound descriptions only -> empty");
+Check(RadioText.Clean("Thank you.") == "" && RadioText.Clean(" you") == "", "clean: noise hallucinations dropped");
+Check(RadioText.Clean("Thank you guys, great job.") == "Thank you guys, great job.", "clean: real thanks kept");
+Check(RadioText.Clean("Push now. Push now. Push now. Push now. Push now.") == "Push now. Push now. Push now.", "clean: loops cut to 3");
+Check(RadioText.Clean("(engine) Box this lap. *beep*") == "Box this lap.", "clean: inline annotations removed");
+Check(RadioText.Clean(new string('a', 2000)).Length <= RadioText.MaxTextChars + 1, "clean: length capped");
+
+// ---------- transcripts.json ----------
+var txRoot = Path.Combine(Path.GetTempPath(), "slqf1test_tx_" + Guid.NewGuid().ToString("N")[..8]);
+var tf = TranscriptFile.Load(txRoot);
+Check(tf.Count == 0 && !tf.Has("TeamRadio/a.mp3"), "transcripts: empty when missing");
+tf.Set("TeamRadio/a.mp3", "Box, box. «Æ» — ok", true, "small.en", 1234, error: false);
+tf.Set("TeamRadio/b.mp3", "", false, "small.en", 0, error: true);
+tf.Save();
+var tf2 = TranscriptFile.Load(txRoot);
+Check(tf2.Has("TeamRadio/a.mp3") && tf2.Text("TeamRadio/a.mp3") == "Box, box. «Æ» — ok", "transcripts: roundtrip");
+Check(!tf2.Has("TeamRadio/b.mp3"), "transcripts: failed clip counts as missing (retried)");
+Check(File.ReadAllText(tf.FilePath).Contains("«Æ»") && !File.Exists(tf.FilePath + ".tmp"), "transcripts: readable UTF-8, no temp file left");
+File.WriteAllText(tf.FilePath, "{ødelagt");
+Check(TranscriptFile.Load(txRoot).Count == 0, "transcripts: corrupt file -> start over");
+
+// ---------- TranscriptService med falske whisper-programmer ----------
+if (!OperatingSystem.IsWindows())
+{
+    var root = Path.Combine(Path.GetTempPath(), "slqf1test_ts_" + Guid.NewGuid().ToString("N")[..8]);
+    var bin = Path.Combine(root, "bin");
+    var models = Path.Combine(root, "models");
+    var radioDir = Path.Combine(root, "recordings", "2026-11-08_Test_Race", "TeamRadio");
+    Directory.CreateDirectory(bin);
+    Directory.CreateDirectory(models);
+    Directory.CreateDirectory(radioDir);
+    void Script(string name, string body)
+    {
+        var path = Path.Combine(bin, name);
+        File.WriteAllText(path, "#!/bin/sh\n" + body + "\n");
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
+    // VAD: "noise" = ingen tale, "bad" = ulæselig fil, ellers tale 0,5–4 s
+    Script("whisper-vad-speech-segments", """
+        while [ $# -gt 0 ]; do [ "$1" = "-f" ] && f="$2"; shift; done
+        case "$f" in
+          *noise*) printf '\nDetected 0 speech segments:\n\n' ;;
+          *bad*) echo "error: failed to read audio data from $f" >&2; exit 2 ;;
+          *) printf '\nDetected 1 speech segments:\nSpeech segment 0: start = 50.00, end = 400.00\n\n' ;;
+        esac
+        """);
+    Script("whisper-cli", $"""
+        printf '%s\n' "$@" > "{root}/args-$$.txt"
+        printf '\n [MUSIC] Box, box. Box this lap.\n'
+        """);
+    foreach (var m in new[] { "ggml-small.en.bin", TranscriptService.VadModelName })
+        File.WriteAllBytes(Path.Combine(models, m), [.. "lmgg"u8, .. new byte[200_000]]);
+    foreach (var f in new[] { "a.mp3", "noise.mp3", "bad.mp3" })
+        File.WriteAllText(Path.Combine(radioDir, f), "mp3");
+
+    var log = new LogBuffer(null, 1);
+    var cfg = new ServerConfig { DataDir = root, RecordingsDir = Path.Combine(root, "recordings"), WhisperDir = bin, TranscribeThreads = 2 };
+    using var svc = new TranscriptService(cfg, log, () => new[] { "Max Verstappen", "Charles Leclerc" });
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    Check(svc.Enabled, "transcribe: enabled with binaries present");
+    svc.Start(cts.Token);
+    File.WriteAllText(Path.Combine(radioDir, "live.mp3"), "mp3");
+    svc.Enqueue(Path.Combine(root, "recordings", "2026-11-08_Test_Race"), "TeamRadio/live.mp3", live: true);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (sw.Elapsed < TimeSpan.FromSeconds(20))
+    {
+        var st = svc.AdminStatus();
+        if ((int)st["done"]! + (int)st["failed"]! >= 4) break;
+        await Task.Delay(100);
+    }
+    var txs = TranscriptFile.Load(Path.Combine(root, "recordings", "2026-11-08_Test_Race"));
+    Check(svc.Ready, "transcribe: existing models accepted (no download)");
+    Check(txs.Text("TeamRadio/a.mp3") == "Box, box. Box this lap.", "transcribe: backfill clip transcribed + cleaned");
+    Check(txs.Text("TeamRadio/live.mp3") == "Box, box. Box this lap.", "transcribe: live clip transcribed");
+    var noiseJson = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(txs.FilePath))!["clips"]!["TeamRadio/noise.mp3"]!;
+    Check(txs.Has("TeamRadio/noise.mp3") && noiseJson["speech"]!.GetValue<bool>() == false && txs.Text("TeamRadio/noise.mp3") == "",
+        "transcribe: no speech -> whisper skipped, empty text");
+    Check(!txs.Has("TeamRadio/bad.mp3") && (int)svc.AdminStatus()["failed"]! == 1, "transcribe: unreadable file -> failed, retried later");
+    var argFiles = Directory.GetFiles(root, "args-*.txt");
+    var args1 = argFiles.Length > 0 ? File.ReadAllLines(argFiles[0]) : Array.Empty<string>();
+    Check(argFiles.Length == 2, $"transcribe: whisper run only for clips with speech ({argFiles.Length})");
+    Check(args1.Contains("-sns") && args1.Contains("-nt") && string.Join(" ", args1).Contains("-l en") &&
+          string.Join(" ", args1).Contains("-ac " + RadioText.AudioContext(4.0)), "transcribe: whisper args (-ac from VAD, -l en, -sns)");
+    Check(args1.Any(a => a.StartsWith("F1 team radio.") && a.Contains("Charles Leclerc")), "transcribe: prompt with driver names");
+    Check(File.ReadAllText(Path.Combine(models, "driver-names.txt")).Contains("Max Verstappen"), "transcribe: names remembered for backfill");
+    cts.Cancel();
+
+    var off = new TranscriptService(new ServerConfig { DataDir = root, WhisperDir = Path.Combine(root, "nope") }, log, () => Array.Empty<string>());
+    Check(!off.Enabled && !(bool)off.PublicStatus()["enabled"]!, "transcribe: disabled without whisper binaries");
+    try { Directory.Delete(root, true); } catch (IOException) { }
+}
 
 Console.WriteLine(fails > 0 ? $"\n{fails} FAILURES" : "\nALL SERVER TESTS PASSED");
 return fails > 0 ? 1 : 0;

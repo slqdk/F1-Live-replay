@@ -320,28 +320,69 @@ export function renderRaceControl(state) {
 
 // ---------- Teamradio ----------
 
+/** Kørere til filteret: holdkammerater ved siden af hinanden. */
+export function radioDrivers(state) {
+  return Object.values(state.DriverList || {})
+    .filter((d) => d && typeof d === "object" && d.RacingNumber)
+    .map((d) => ({ num: String(d.RacingNumber), tla: tla(state, d.RacingNumber), team: d.TeamName || "", colour: teamColour(state, d.RacingNumber) }))
+    .sort((a, b) => a.team.localeCompare(b.team, "da") || Number(a.num) - Number(b.num));
+}
+
+let filterSig = "";
+
+/** Kørerchips i teamradio-filteret (klik = vis/skjul). */
+export function renderRadioFilter(state, hidden, onToggle) {
+  const drivers = radioDrivers(state);
+  const sig = drivers.map((d) => d.tla + d.colour).join() + "|" + [...hidden].sort().join();
+  if (sig === filterSig) return drivers;
+  filterSig = sig;
+  const box = $("rfChips");
+  box.innerHTML = drivers.length
+    ? drivers.map((d) => `<button type="button" class="rf-chip" data-tla="${esc(d.tla)}" aria-pressed="${!hidden.has(d.tla)}" title="${esc(d.team)}">` +
+        `<i style="background:${d.colour}"></i>${esc(d.tla)}</button>`).join("")
+    : `<p class="rf-none">Kørerlisten kommer, når sessionen starter.</p>`;
+  box.querySelectorAll(".rf-chip").forEach((b) => b.addEventListener("click", () => onToggle(b.dataset.tla)));
+  return drivers;
+}
+
 let radioSig = "";
 
-export function renderRadio(state, mediaStem, audio, onPlay) {
+/** opts: { texts: {Path: {text, speech, error}}, textsVersion, waiting (live/forsinket: vis at teksten
+ *  er på vej), hidden: Set<TLA>, clockMs } */
+export function renderRadio(state, mediaStem, onPlay, opts = {}) {
   const caps = listOf(state.TeamRadio?.Captures);
-  const sig = `${caps.length}:${caps[caps.length - 1]?.Utc || ""}:${mediaStem || ""}`;
+  const hidden = opts.hidden || new Set();
+  const texts = opts.texts || {};
+  const recentMs = 3 * 60 * 1000; // så længe venter vi synligt på teksten
+  const clock = opts.clockMs || Date.now();
+  const sig = `${caps.length}:${caps[caps.length - 1]?.Utc || ""}:${mediaStem || ""}:${opts.textsVersion || 0}:` +
+    `${[...hidden].join()}:${opts.waiting ? Math.floor(clock / 15000) : 0}`;
   if (sig === radioSig) return caps;
   radioSig = sig;
   const list = $("radio");
-  const items = caps.slice(-40).reverse();
+  const shown = caps.filter((c) => !hidden.has(tla(state, c.RacingNumber)));
+  const items = shown.slice(-40).reverse();
   if (!items.length) {
-    list.innerHTML = `<li class="none">Ingen teamradio endnu.</li>`;
+    list.innerHTML = `<li class="none">${caps.length ? "Ingen teamradio fra de valgte kørere endnu." : "Ingen teamradio endnu."}</li>`;
     return caps;
   }
   list.innerHTML = items.map((c) => {
     const src = mediaStem && c.Path ? `media/${encodeURIComponent(mediaStem)}/${c.Path.split("/").map(encodeURIComponent).join("/")}` : "";
-    return `<li><i class="bar" style="background:${teamColour(state, c.RacingNumber)}"></i>` +
+    const t = c.Path ? texts[c.Path] : null;
+    let text = "";
+    if (t && !t.error) {
+      text = t.text ? `<p class="said">${esc(t.text)}</p>`
+        : `<p class="said quiet">${t.speech === false ? "Ingen tale i klippet." : "Utydeligt."}</p>`;
+    } else if (opts.waiting && src && clock - Date.parse(c.Utc) < recentMs) {
+      text = `<p class="said quiet">Skriver det ned…</p>`;
+    }
+    return `<li${text ? " class=\"has-text\"" : ""}><i class="bar" style="background:${teamColour(state, c.RacingNumber)}"></i>` +
       `<span class="when">${esc(fmtLocalTime(c.Utc))}</span>` +
       `<span class="who">${esc(tla(state, c.RacingNumber))}</span>` +
-      `<button type="button" data-src="${esc(src)}" ${src ? "" : "disabled title='Lydfilen er ikke hentet'"}>Afspil</button></li>`;
+      `<button type="button" data-src="${esc(src)}" ${src ? "" : "disabled title='Lydfilen er ikke hentet'"}>Afspil</button>` +
+      text + `</li>`;
   }).join("");
   list.querySelectorAll("button[data-src]").forEach((b) => b.addEventListener("click", () => onPlay(b.dataset.src, b)));
-  void audio;
   return caps;
 }
 

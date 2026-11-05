@@ -25,7 +25,9 @@ public sealed record ArchiveResult(int Files, long Bytes, int Missing, bool Unau
 
 public sealed class F1ArchiveClient
 {
-    public const string StaticBase = "https://livetiming.formula1.com/static/";
+    public const string DefaultStaticBase = "https://livetiming.formula1.com/static/";
+    /// Kun til test mod en lokal mock (env F1_STATIC_URL). Tokenet sendes kun til formula1.com.
+    public static string StaticBase { get; set; } = DefaultStaticBase;
     private readonly HttpClient _http;
     private readonly Func<string?> _token;
 
@@ -36,12 +38,15 @@ public sealed class F1ArchiveClient
     }
 
     public static string UrlFor(string relative)
-        => relative.StartsWith("https://", StringComparison.Ordinal) ? relative : StaticBase + relative.TrimStart('/');
+        => relative.StartsWith("https://", StringComparison.Ordinal) ? relative : StaticBase.TrimEnd('/') + "/" + relative.TrimStart('/');
 
     private HttpRequestMessage Request(string relative)
     {
         var req = new HttpRequestMessage(HttpMethod.Get, UrlFor(relative));
-        if (_token() is { } t) req.Headers.Authorization = new("Bearer", t);
+        var host = req.RequestUri!.Host;
+        if (_token() is { } t && (host.Equals("formula1.com", StringComparison.OrdinalIgnoreCase) ||
+                                  host.EndsWith(".formula1.com", StringComparison.OrdinalIgnoreCase)))
+            req.Headers.Authorization = new("Bearer", t);
         return req;
     }
 

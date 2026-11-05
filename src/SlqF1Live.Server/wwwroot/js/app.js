@@ -6,7 +6,7 @@
 
 import { deepMerge } from "./merge.js";
 import { RecordingPlayer } from "./player.js";
-import { renderHeader, renderTower, renderRaceControl, renderRadio, TrackMap, fmtClock } from "./render.js";
+import { renderHeader, renderTower, renderRaceControl, renderRadio, renderRadioFilter, TrackMap, fmtClock, tla } from "./render.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -242,11 +242,70 @@ function autoRadio(state, caps) {
   if (key && key !== app.seenRadio) {
     app.seenRadio = key;
     const playing = app.mode === "live" || app.player.playing;
-    if ($("radioAuto").checked && playing && last?.Path && mediaStem()) {
+    if ($("radioAuto").checked && playing && last?.Path && mediaStem() && !radio.hidden.has(tla(state, last.RacingNumber))) {
       const src = `media/${encodeURIComponent(mediaStem())}/${last.Path.split("/").map(encodeURIComponent).join("/")}`;
       playRadio(src, null);
     }
   }
+}
+
+// ---------- Teamradio: tekst og kørerfilter ----------
+// Serveren skriver klippenes tekst i <stem>/TeamRadio/transcripts.json, efterhånden
+// som de bliver transskriberet. Kun klip der er med i (den afspillede) tilstand
+// vises, så hele filen afslører intet om resten af sessionen.
+
+const radio = {
+  hidden: new Set(store.get("f1radioHidden", "").split(",").filter(Boolean)),
+  texts: {}, textsVersion: 0, stem: null, fetchedAt: 0, busy: false,
+};
+
+function setHidden(next) {
+  radio.hidden = next;
+  store.set("f1radioHidden", [...next].join(","));
+}
+
+function updateFilterLabel(drivers) {
+  const total = drivers.length;
+  const shown = drivers.filter((d) => !radio.hidden.has(d.tla)).length;
+  $("radioFilterBtn").textContent = !total || shown === total ? "Kørere: alle" : `Kørere: ${shown} af ${total}`;
+}
+
+async function pollTexts(stem, caps, clockMs) {
+  if (!stem || !app.pub?.transcribe?.enabled) return;
+  if (radio.stem !== stem) { radio.stem = stem; radio.texts = {}; radio.textsVersion++; radio.fetchedAt = 0; }
+  // Vent kun på tekst til nye klip (en mp3 der aldrig kom, skal ikke holde os i gang)
+  const fresh = (c) => app.mode === "replay" || clockMs - Date.parse(c.Utc) < 3 * 60 * 1000;
+  const waiting = caps.slice(-40).some((c) => c.Path && !radio.texts[c.Path] && fresh(c));
+  if (radio.fetchedAt && !waiting) return;
+  const every = app.mode === "replay" ? 30000 : 4000;
+  if (radio.busy || Date.now() - radio.fetchedAt < every) return;
+  radio.busy = true;
+  radio.fetchedAt = Date.now();
+  try {
+    const res = await fetch(`media/${encodeURIComponent(stem)}/TeamRadio/transcripts.json`, { cache: "no-store" });
+    if (res.ok) {
+      const data = await res.json();
+      if (radio.stem === stem) { radio.texts = data.clips || {}; radio.textsVersion++; }
+    }
+  } catch { /* næste forsøg */ } finally { radio.busy = false; }
+}
+
+$("radioFilterBtn").addEventListener("click", () => {
+  const open = $("radioFilter").hidden;
+  $("radioFilter").hidden = !open;
+  $("radioFilterBtn").setAttribute("aria-expanded", String(open));
+});
+$("radioFilter").addEventListener("click", (e) => {
+  const act = e.target.closest("[data-rf]")?.dataset.rf;
+  if (!act) return;
+  const state = app.mode === "live" ? app.liveState : app.player.state;
+  const all = Object.values(state.DriverList || {}).filter((d) => d?.RacingNumber).map((d) => tla(state, d.RacingNumber));
+  setHidden(act === "none" ? new Set(all) : new Set());
+});
+function toggleDriver(code) {
+  const next = new Set(radio.hidden);
+  if (next.has(code)) next.delete(code); else next.add(code);
+  setHidden(next);
 }
 
 // ---------- Kontroller ----------
@@ -358,8 +417,14 @@ function frame(now) {
   renderHeader(state, clock, modeLabel);
   renderTower(state);
   renderRaceControl(state);
-  const caps = renderRadio(state, mediaStem(), audio, playRadio);
+  updateFilterLabel(renderRadioFilter(state, radio.hidden, toggleDriver));
+  const caps = renderRadio(state, mediaStem(), playRadio, {
+    texts: radio.texts, textsVersion: radio.textsVersion,
+    waiting: !!app.pub?.transcribe?.enabled && app.mode !== "replay",
+    hidden: radio.hidden, clockMs: clock,
+  });
   autoRadio(state, caps);
+  pollTexts(mediaStem(), caps, clock);
 
   if (!state.SessionInfo && app.mode === "live" && app.pub?.next?.length) {
     const n = app.pub.next[0];
