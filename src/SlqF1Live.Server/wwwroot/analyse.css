@@ -64,6 +64,7 @@ body.analyse { display: block; height: auto; overflow: auto; min-height: 100vh; 
 .an-chart.loading, .an-table-wrap.loading { opacity: .45; }
 .an-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
 .an-chart .grid { stroke: var(--line); stroke-width: 1; shape-rendering: crispEdges; }
+.an-chart .grid.zero { stroke: var(--muted); }
 .an-chart .axis-label { fill: var(--muted); font: 500 12.5px var(--font-num); font-variant-numeric: tabular-nums; }
 .an-chart .x-label { fill: var(--muted); font: 500 12.5px var(--font-ui); }
 .an-chart .series { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
@@ -105,6 +106,7 @@ body.analyse { display: block; height: auto; overflow: auto; min-height: 100vh; 
 .an-table td:first-child { text-align: left; font-family: var(--font-ui); }
 .an-table td.avg { font-weight: 600; }
 .an-table td.note { color: var(--muted); }
+.an-table td.base { color: var(--muted); }
 .an-table .key { display: inline-flex; align-items: center; gap: 8px; }
 .an-foot { margin: 8px 2px 0; color: var(--muted); font-size: 13.5px; max-width: 80ch; }
 

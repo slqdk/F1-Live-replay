@@ -1,8 +1,9 @@
 // Analysesiden: sæsonudvikling i kvalifikation og løb, valgfri hold.
 // Data: /api/dev (serveren regner med Core/DevStats — samme tal som den gamle
-// side og Windows-app'en). URL: ?year=2026&mode=quali|race&per=driver|team&view=chart|table&teams=A,B
+// side og Windows-app'en). URL: ?year=2026&mode=quali|race&per=driver|team&view=chart|table&zoom=1&teams=A,B
+// To grafer med samme valg: gab pr. Grand Prix, og ændringen i gabet siden første Grand Prix.
 
-import { DevChart, assignShapes, fmtGap, fmtM, lineKey } from "./devchart.js";
+import { DevChart, assignShapes, deltaSeries, fmtDelta, fmtM, lineKey } from "./devchart.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -23,11 +24,13 @@ const st = {
   data: null,
   cache: new Map(),
   selected: null,
+  selYear: null,
   shapes: new Map(),
   token: 0,
 };
 
 const chart = new DevChart($("chart"), $("tooltip"));
+const deltaChart = new DevChart($("deltaChart"), $("deltaTip"));
 
 // ---------- Data ----------
 
@@ -91,10 +94,16 @@ async function fetchSeason(year, mode, my) {
 
 function selKey() { return `f1dev:sel:${st.year}`; }
 
-/** Valgte hold: URL → gemt valg for sæsonen → serverens standard (bedste + dårligste). */
+/** Valgte hold: URL → gemt valg for sæsonen → serverens standard (bedste + dårligste).
+ *  Skift mellem kvalifikation og løb beholder valget (samme sæson). */
 function initSelection() {
   const names = st.data.teams.map((t) => t.name);
   st.shapes = assignShapes(st.data.teams);
+  if (st.selected && st.selYear === st.year) {
+    st.selected = new Set([...st.selected].filter((n) => names.includes(n)));
+    return;
+  }
+  st.selYear = st.year;
   let sel = null;
   if (st.urlTeams) { sel = st.urlTeams.filter((n) => names.includes(n)); st.urlTeams = null; }
   if (!sel) {
@@ -186,6 +195,12 @@ function render() {
   if (!d) return;
   const isQuali = st.mode === "quali";
   $("chartTitle").textContent = isQuali ? "Tid efter pole pr. Grand Prix" : "Tid efter vinderen pr. Grand Prix";
+  $("deltaTitle").textContent = `${isQuali ? "Gab til pole" : "Gab til vinderen"}: ændring siden første Grand Prix`;
+  const ref = isQuali ? "pole" : "vinderen";
+  $("deltaHelp").textContent =
+    `0 = samme gab som i første Grand Prix. Opad er bedre: −0,20 s betyder 0,20 s tættere på ${ref} end dengang. ` +
+    `${isQuali ? "Havde et hold eller en kører pole" : "Vandt et hold eller en kører"} i første Grand Prix, kan linjen ikke komme over 0. ` +
+    "Kørte en kører ikke første Grand Prix, regnes fra vedkommendes første.";
   $("subtitle").textContent =
     `${isQuali ? "Kvalifikation" : "Løb"} ${d.year}: ${d.gps.length} Grand Prix. ` +
     `${st.per === "team" ? "Én linje pr. hold (bedste bil pr. GP)." : "Én linje pr. kører."} Data fra OpenF1.`;
@@ -193,8 +208,14 @@ function render() {
   renderChips();
 
   const series = seriesFor(st.selected);
-  if (st.view === "chart") chart.render({ gps: d.gps, series, isQuali, zoom: st.zoom });
-  else renderTable(series, isQuali);
+  const deltas = deltaSeries(series);
+  if (st.view === "chart") {
+    chart.render({ gps: d.gps, series, isQuali, zoom: st.zoom, kind: "gap" });
+    deltaChart.render({ gps: d.gps, series: deltas, isQuali, zoom: st.zoom, kind: "delta" });
+  } else {
+    renderTable(series, isQuali);
+    renderDeltaTable(deltas);
+  }
 
   const notes = [];
   if (d.skipped?.length) notes.push(`Uden resultatdata (sprunget over): ${d.skipped.join(", ")}.`);
@@ -287,6 +308,53 @@ function renderTable(series, isQuali) {
   wrap.appendChild(t);
 }
 
+/** Ændring siden første GP: én række pr. serie, "Seneste" = nyeste værdi. */
+function renderDeltaTable(series) {
+  const wrap = $("deltaTableWrap");
+  wrap.textContent = "";
+  if (!series.length) return;
+  const t = document.createElement("table");
+  t.className = "an-table";
+  const head = t.createTHead().insertRow();
+  const th0 = document.createElement("th");
+  th0.textContent = st.per === "team" ? "Hold" : "Kører";
+  head.appendChild(th0);
+  for (const g of st.data.gps) {
+    const th = document.createElement("th");
+    th.textContent = g.label;
+    th.title = g.name;
+    head.appendChild(th);
+  }
+  const thL = document.createElement("th");
+  thL.textContent = "Seneste";
+  head.appendChild(thL);
+  const body = t.createTBody();
+  for (const s of series) {
+    const tr = body.insertRow();
+    const c0 = tr.insertCell();
+    const key = document.createElement("span");
+    key.className = "key";
+    const label = document.createElement("span");
+    label.textContent = s.sub ? `${s.label}, ${s.sub}` : s.label;
+    key.append(lineKey(s, 24), label);
+    c0.appendChild(key);
+    for (const v of s.values) {
+      const c = tr.insertCell();
+      if (v && Number.isFinite(v.s)) {
+        c.textContent = v.base ? "basis" : fmtDelta(v.s).replace(" s", "");
+        if (v.base) c.className = "base";
+      } else {
+        c.textContent = v?.note || "–";
+        c.className = "note";
+      }
+    }
+    const cl = tr.insertCell();
+    cl.className = "avg";
+    cl.textContent = Number.isFinite(s.latest) ? fmtDelta(s.latest).replace(" s", "") : "–";
+  }
+  wrap.appendChild(t);
+}
+
 function syncUrl() {
   const p = new URLSearchParams();
   if (st.year !== nowYear) p.set("year", st.year);
@@ -317,9 +385,7 @@ document.querySelectorAll("[data-per]").forEach((b) => b.addEventListener("click
 }));
 document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => {
   st.view = b.dataset.view; pressed("[data-view]", "view", st.view);
-  $("chartWrap").hidden = st.view !== "chart";
-  $("tableWrap").hidden = st.view !== "table";
-  $("chartHelp").hidden = st.view !== "chart";
+  showView();
   render();
 }));
 $("zoom").checked = st.zoom;
@@ -337,7 +403,11 @@ $("teamsDefault").addEventListener("click", () => {
 pressed("[data-mode]", "mode", st.mode);
 pressed("[data-per]", "per", st.per);
 pressed("[data-view]", "view", st.view);
-$("chartWrap").hidden = st.view !== "chart";
-$("tableWrap").hidden = st.view !== "table";
-$("chartHelp").hidden = st.view !== "chart";
+showView();
 load();
+
+function showView() {
+  const chartView = st.view === "chart";
+  for (const id of ["chartWrap", "chartHelp", "deltaWrap"]) $(id).hidden = !chartView;
+  for (const id of ["tableWrap", "deltaTableWrap"]) $(id).hidden = chartView;
+}

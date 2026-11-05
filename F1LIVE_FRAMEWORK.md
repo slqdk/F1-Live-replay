@@ -308,18 +308,28 @@ stedet snittet af bedste bil pr. GP (regnes i browseren).
 - Kørere: én linje pr. kører i holdfarve; holdets bedste kører over sæsonen
   fuld linje, makker stiplet. Hold: bedste bil pr. GP.
 - Y = gab til pole/vinderen, 0 øverst (højere er bedre). Zoom klipper ved
-  max(p90·1,25, min+0,5); punkter udenfor tegnes som nedadvendt trekant på
-  kanten. Aksedecimaler følger trinnet (0,25 → "+0.25 s").
+  max(p90·1,25, min+0,5); punkter udenfor tegnes som en pil (med stilk) på
+  kanten, i retning af værdien. Aksedecimaler følger trinnet (0,25 → "+0.25 s").
+- **Graf 2: ændring siden første Grand Prix** (`deltaSeries` i devchart.js):
+  pr. serie gab_N − gab ved seriens første GP med tid (normalt sæsonens
+  første; ellers kørerens/holdets første). Negativ = tættere på end dengang
+  og tegnes øverst; 0-linjen fremhævet; aksen med fortegn ("−0.25 s").
+  Zoom: symmetrisk ±max(p90(|Δ|)·1,25, 0,25). Udgået/noter beholdes som
+  huller. Tooltip: ændring + dagens gab; basispunktet vises som "Basis".
+  Tabel: Δ pr. GP + "Seneste". Bemærk: den der havde pole/vandt i første GP,
+  kan ikke komme over 0 (gab kan ikke blive negativt).
+- Skift mellem kvalifikation og løb beholder holdvalget (samme sæson).
 - Mærker: linje 2 px, punkt r 4,5 med 2 px ring i fladens farve. Endelabels
   med føringslinje når ≤ 8 serier. Krydsmarkør + tooltip med alle synlige
   serier (s og meter); ←/→ flytter markøren; tabelvisning med alle værdier.
 - **Punktformer (sekundær kodning):** holdfarverne kolliderer (Ferrari/Audi
   ΔE 1,5; Haas/Cadillac 4,8). Afstand = mindste OKLab-ΔE under normalt syn,
   protan og deutan (Machado; CVD vægtet ×1,6); "farvelignende" < 25.
-  Formerne er ● ■ ◆ ▲ + × (▼ er forbeholdt punkter uden for zoom). Da 7 hold
-  i 2026 er parvis farvelignende og der kun er 6 former, vælges den største
-  tærskel, hvor alle par under den kan få hver sin form (graffarvning med
-  backtracking); kun det mest forskellige par deler (Haas/Williams, 24,5).
+  Formerne er ● ■ ◆ ▲ ▼ + × (pile er forbeholdt punkter uden for zoom). 7
+  hold i 2026 er parvis farvelignende — med 7 former får de alle hver sin.
+  Generelt vælges den største tærskel, hvor alle par under den kan få hver
+  sin form (graffarvning med backtracking); må nogen dele, er det de mest
+  forskellige.
   Formen følger holdet for hele sæsonen — aldrig filteret eller rækkefølgen.
 - Tekst bærer aldrig seriefarven; identitet = farvestreg + form ved siden af.
 
@@ -366,7 +376,8 @@ stedet snittet af bedste bil pr. GP (regnes i browseren).
   RadioText (prompt, VAD, lydkontekst, oprydning), transcripts.json og
   TranscriptService mod falske whisper-programmer (shell-scripts).
 - `tests/web/*.test.mjs` (`node --test tests/web/*.test.mjs`) — JS-merge =
-  C#-merge; udviklingsgrafens formtildeling, aksedecimaler og formatering.
+  C#-merge; udviklingsgrafens formtildeling, aksedecimaler, formatering og
+  ændring siden første Grand Prix.
 - Live-verificeret 4/11-2026 herfra: negotiate/ws/subscribe mod F1, snapshot
   (26 topics), login trin 1–2 mod id.formula1.com. End-to-end mod lokal mock
   af SignalR Core: optagelse åbnes, skrives, forsinket live/afspilning i browser.

@@ -1,5 +1,7 @@
 // DevChart — linjegraf over sæsonen (SVG, ingen biblioteker).
-// Y = gab til pole/vinderen, 0 øverst (højere er bedre). X = Grand Prix.
+// kind "gap":   Y = gab til pole/vinderen, 0 øverst (højere er bedre).
+// kind "delta": Y = ændring i gabet siden seriens første Grand Prix; negativ
+//               (tættere på) øverst, 0-linjen fremhævet. X = Grand Prix.
 // Linjer 2 px, punkter r 4,5 med 2 px ring i fladens farve, hårfine gitterlinjer,
 // endelabels i en rende til højre (med føringslinje), krydsmarkør + tooltip
 // der viser alle synlige serier ved det valgte GP. Tekst bærer aldrig
@@ -7,10 +9,10 @@
 
 const NS = "http://www.w3.org/2000/svg";
 
-/** Holdenes punktformer — valgt så de kan skelnes ved ~9 px. Nedadvendt
- *  trekant er forbeholdt punkter uden for den zoomede skala (OUTLIER). */
-export const SHAPES = ["circle", "square", "diamond", "triangle", "cross", "x"];
-export const OUTLIER = "triangle-down";
+/** Holdenes punktformer — valgt så de kan skelnes ved ~9 px. Pile (med
+ *  stilk) er forbeholdt punkter uden for den zoomede skala. */
+export const SHAPES = ["circle", "square", "diamond", "triangle", "triangle-down", "cross", "x"];
+export const OUTLIER_SHAPES = ["arrow-up", "arrow-down"];
 
 const crossPts = (L, w) => [[-w, -L], [w, -L], [w, -w], [L, -w], [L, w], [w, w], [w, L], [-w, L], [-w, w], [-L, w], [-L, -w], [-w, -w]];
 function polygon(x, y, pts) {
@@ -23,6 +25,8 @@ export function shapePath(shape, x, y, r) {
     case "diamond": { const a = r * 1.25; return `M${x},${y - a}L${x + a},${y}L${x},${y + a}L${x - a},${y}z`; }
     case "triangle": { const a = r * 1.25; return `M${x},${y - a}L${x + a},${y + a * 0.8}L${x - a},${y + a * 0.8}z`; }
     case "triangle-down": { const a = r * 1.25; return `M${x},${y + a}L${x + a},${y - a * 0.8}L${x - a},${y - a * 0.8}z`; }
+    case "arrow-down": return `M${x - 0.35 * r},${y - 1.3 * r}h${0.7 * r}v${r}h${0.55 * r}L${x},${y + 1.3 * r}L${x - 0.9 * r},${y - 0.3 * r}h${0.55 * r}z`;
+    case "arrow-up": return `M${x - 0.35 * r},${y + 1.3 * r}h${0.7 * r}v${-r}h${0.55 * r}L${x},${y - 1.3 * r}L${x - 0.9 * r},${y + 0.3 * r}h${0.55 * r}z`;
     case "cross": return polygon(x, y, crossPts(r * 1.25, r * 0.5));
     case "x": { const c = Math.SQRT1_2; return polygon(x, y, crossPts(r * 1.35, r * 0.5).map(([a, b]) => [(a - b) * c, (a + b) * c])); }
     case "hexagon": {
@@ -70,9 +74,9 @@ export function colourDistance(h1, h2) {
 export const SIMILAR = 25;
 
 /** Fast punktform pr. hold for hele sæsonen (følger holdet, ikke filteret).
- *  Der er kun 6 former, og i 2026 er 7 hold parvis farvelignende under
- *  farveblindhed — så målet er: de hold, der må dele form, skal være så
- *  forskellige i farve som muligt. Vi finder den største tærskel T, hvor alle
+ *  Der er 7 former; i 2026 er netop 7 hold parvis farvelignende under
+ *  farveblindhed. Får flere hold brug for det end der er former, skal de
+ *  hold, der må dele form, være så forskellige i farve som muligt. Vi finder den største tærskel T, hvor alle
  *  par med afstand < T kan få hver sin form (graffarvning med backtracking),
  *  og vælger derefter former, der spreder holdene mest muligt. Deterministisk:
  *  samme hold og farver giver altid samme former, uanset rækkefølge. */
@@ -136,12 +140,38 @@ function colourGraph(d, T, k) {
   return rec(0, 0) ? col : null;
 }
 
+// ---------- Ændring siden første Grand Prix ----------
+
+/** Samme serier, men hvert punkt = gab nu − gab i seriens første GP med tid
+ *  (normalt sæsonens første; ellers kørerens/holdets første). Negativ = tættere
+ *  på pole/vinderen end dengang. Punkter: { s: ændring, m, gap, base }. */
+export function deltaSeries(series) {
+  return series.map((s) => {
+    const b = s.values.findIndex((v) => v && Number.isFinite(v.s));
+    const base = b >= 0 ? s.values[b] : null;
+    const values = s.values.map((v, i) => {
+      if (!v) return null;
+      if (!Number.isFinite(v.s) || !base) return Number.isFinite(v.s) ? null : v; // udgået o.l. beholdes som note
+      const m = Number.isFinite(v.m) && Number.isFinite(base.m) ? v.m - base.m : null;
+      return { s: v.s - base.s, m, gap: v.s, base: i === b };
+    });
+    const last = [...values].reverse().find((v) => v && Number.isFinite(v.s));
+    return { ...s, values, baseIndex: b, latest: last ? last.s : NaN };
+  });
+}
+
 // ---------- Formatering ----------
 
 export function fmtGap(s, isQuali) {
   if (s === 0) return isQuali ? "Pole" : "Vinder";
   return `+${s.toFixed(3)} s`;
 }
+/** Ændring med fortegn: "−0.123 s" (tættere på), "+0.456 s" (længere fra), "0 s". */
+export function fmtDelta(v, dec = 3) {
+  if (Math.abs(v) < 0.5 * 10 ** -dec) return "0 s";
+  return `${v < 0 ? "−" : "+"}${Math.abs(v).toFixed(dec)} s`;
+}
+
 export function fmtM(m) {
   if (m === null || m === undefined || !Number.isFinite(m)) return "";
   return m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${m.toFixed(1)} m`;
@@ -180,7 +210,8 @@ export class DevChart {
     container.addEventListener("blur", () => this._hideTip());
   }
 
-  /** data: { gps:[{label,name,date}], series:[{label, sub, colour, dashed, shape, values:[{s,m,note}|null]}], isQuali, zoom } */
+  /** data: { gps:[{label,name,date}], series:[{label, sub, colour, dashed, shape, values:[{s,m,note}|null]}],
+   *  isQuali, zoom, kind: "gap"|"delta" }. delta-punkter har også { gap, base }. */
   render(data) {
     this.data = data;
     const box = this.box;
@@ -201,10 +232,11 @@ export class DevChart {
     this.svg = svg;
     this.geom = { W, H, M, pw, ph, n };
 
+    const delta = data.kind === "delta";
     const vals = [];
     for (const s of data.series) for (const v of s.values) if (v && Number.isFinite(v.s)) vals.push(v.s);
     svg.setAttribute("aria-label", data.series.length
-      ? `${data.series.length} serier over ${n} Grand Prix. Brug tabelvisningen for alle værdier.`
+      ? `${data.series.length} serier over ${n} Grand Prix${delta ? ", ændring siden første Grand Prix" : ""}. Brug tabelvisningen for alle værdier.`
       : "Ingen serier valgt.");
 
     if (!n || !vals.length) {
@@ -213,26 +245,38 @@ export class DevChart {
       return;
     }
 
-    // Y-skala (0 øverst)
+    // Y-skala: mindste værdi øverst (bedst). gap: [0, maks]; delta: [min(0, lav), maks(0, høj)]
     const sorted = [...vals].sort((a, b) => a - b);
-    let top = sorted[sorted.length - 1];
+    let lo = delta ? Math.min(0, sorted[0]) : 0;
+    let hi = Math.max(0, sorted[sorted.length - 1]);
     if (data.zoom && sorted.length > 4) {
-      const p90 = sorted[Math.floor(sorted.length * 0.9)];
-      top = Math.min(top, Math.max(p90 * 1.25, sorted[0] + 0.5));
+      if (delta) {
+        const abs = sorted.map(Math.abs).sort((a, b) => a - b);
+        const lim = Math.max(abs[Math.floor(abs.length * 0.9)] * 1.25, 0.25);
+        lo = Math.max(lo, -lim);
+        hi = Math.min(hi, lim);
+      } else {
+        const p90 = sorted[Math.floor(sorted.length * 0.9)];
+        hi = Math.min(hi, Math.max(p90 * 1.25, sorted[0] + 0.5));
+      }
     }
-    const step = niceStep(Math.max(top, 0.05) / 5);
-    const yMax = Math.max(step, Math.ceil(top / step - 1e-9) * step);
-    const y = (v) => M.top + (Math.min(v, yMax) / yMax) * ph;
+    const step = niceStep(Math.max(hi - lo, 0.05) / 5);
+    const vTop = Math.floor(lo / step + 1e-9) * step;
+    const vBot = Math.max(vTop + step, Math.ceil(hi / step - 1e-9) * step);
+    const y = (v) => M.top + ((Math.max(vTop, Math.min(vBot, v)) - vTop) / (vBot - vTop)) * ph;
     const x = (i) => M.left + (n === 1 ? pw / 2 : (i * pw) / (n - 1));
-    this.scale = { x, y, yMax };
+    this.scale = { x, y, vTop, vBot };
 
     // Gitter + akser
     const dec = tickDecimals(step);
-    for (let v = 0; v <= yMax + 1e-9; v += step) {
+    const ticks = Math.round((vBot - vTop) / step);
+    for (let k = 0; k <= ticks; k++) {
+      const v = vTop + k * step;
       const yy = Math.round(y(v)) + 0.5;
-      el("line", { x1: M.left, x2: M.left + pw, y1: yy, y2: yy, class: "grid" }, svg);
+      const zero = delta && Math.abs(v) < step / 1000;
+      el("line", { x1: M.left, x2: M.left + pw, y1: yy, y2: yy, class: zero ? "grid zero" : "grid" }, svg);
       const t = el("text", { x: M.left - 10, y: yy + 4, "text-anchor": "end", class: "axis-label" }, svg);
-      t.textContent = `+${v.toFixed(dec)} s`;
+      t.textContent = delta ? fmtDelta(v, dec) : `+${v.toFixed(dec)} s`;
     }
     for (let i = 0; i < n; i++) {
       const xx = Math.round(x(i)) + 0.5;
@@ -259,9 +303,14 @@ export class DevChart {
       let last = null;
       s.values.forEach((v, i) => {
         if (!v || !Number.isFinite(v.s)) return;
-        const out = v.s > yMax;
-        el("path", { d: shapePath(out ? OUTLIER : s.shape, x(i), y(v.s), out ? 5 : 4.5), fill: s.colour, class: "dot" }, g);
-        last = { i, yy: y(v.s) };
+        // Uden for den zoomede skala: pil på kanten, i retning af værdien
+        const below = v.s > vBot + 1e-9, above = v.s < vTop - 1e-9;
+        const yy = y(v.s);
+        const d = below ? shapePath("arrow-down", x(i), yy - 5.5, 6)
+          : above ? shapePath("arrow-up", x(i), yy + 5.5, 6)
+          : shapePath(s.shape, x(i), yy, 4.5);
+        el("path", { d, fill: s.colour, class: "dot" }, g);
+        last = { i, yy };
       });
       if (last && labelled) ends.push({ s, ...last });
     }
@@ -323,6 +372,7 @@ export class DevChart {
   _showTip(i, xx) {
     const d = this.data;
     const gp = d.gps[i];
+    const delta = d.kind === "delta";
     const rows = d.series
       .map((s) => ({ s, v: s.values[i] }))
       .filter((r) => r.v && (Number.isFinite(r.v.s) || r.v.note))
@@ -342,11 +392,17 @@ export class DevChart {
       li.appendChild(lineKey(s, 26));
       const val = document.createElement("span");
       val.className = "v";
-      val.textContent = Number.isFinite(v.s) ? fmtGap(v.s, d.isQuali) : v.note;
       const name = document.createElement("span");
       name.className = "n";
-      const m = Number.isFinite(v.s) && v.s > 0 ? fmtM(v.m) : "";
-      name.textContent = `${s.label}${s.sub ? `, ${s.sub}` : ""}${m ? ` (${m})` : ""}`;
+      if (delta) {
+        val.textContent = !Number.isFinite(v.s) ? v.note : v.base ? "Basis" : fmtDelta(v.s);
+        const gap = Number.isFinite(v.gap) ? `gab ${fmtGap(v.gap, d.isQuali)}` : "";
+        name.textContent = `${s.label}${s.sub ? `, ${s.sub}` : ""}${gap ? ` · ${gap}` : ""}`;
+      } else {
+        val.textContent = Number.isFinite(v.s) ? fmtGap(v.s, d.isQuali) : v.note;
+        const m = Number.isFinite(v.s) && v.s > 0 ? fmtM(v.m) : "";
+        name.textContent = `${s.label}${s.sub ? `, ${s.sub}` : ""}${m ? ` (${m})` : ""}`;
+      }
       li.append(val, name);
       ol.appendChild(li);
     }

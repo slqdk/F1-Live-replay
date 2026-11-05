@@ -113,11 +113,15 @@ Linket **Udvikling** øverst på visningen (eller `https://f1live.slq.dk/analyse
 
 - **Kvalifikation/Løb**: gab til pole eller vinderen pr. Grand Prix. 0 er
   øverst, så højere er bedre. Tooltippen viser også gabet i meter.
+- **Ændring siden første Grand Prix** (grafen nedenunder): hvor meget
+  gabet er vokset eller skrumpet siden sæsonens første Grand Prix.
+  −0,20 s = 0,20 s tættere på pole/vinderen end dengang. Samme hold,
+  tilstand og zoom som grafen ovenover.
 - **Kørere/Hold**: én linje pr. kører (holdets bedste kører fuld, makkeren
   stiplet), eller én linje pr. hold med holdets bedste bil pr. GP.
 - **Hold-chips**: klik for at vælge, hvilke hold der sammenlignes. Som
   standard vises bedste og dårligste hold. Valget huskes pr. sæson.
-- **Zoom** skjuler outliers (punkter udenfor vises som ▼ på kanten).
+- **Zoom** skjuler outliers (punkter udenfor vises som en pil på kanten).
   **Tabel** viser alle værdier.
 - Hold med næsten samme farve (fx Ferrari og Audi) får hver sin punktform.
 - Linket kan deles: sæson, tilstand og valgte hold står i adressen.
