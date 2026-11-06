@@ -484,7 +484,8 @@ export class TrackMap {
     const s = samples[samples.length - 1];
     if (!s?.Entries || s.Timestamp === this.lastSample) return;
     this.lastSample = s.Timestamp;
-    this.addPoints(s.Entries);
+    // Alle stikprøver i beskeden (2–3 pr. sekund) — reserveomridset bliver tæt hurtigere
+    for (const x of samples) this.addPoints(x?.Entries);
     for (const [num, e] of Object.entries(s.Entries)) {
       if (typeof e?.X !== "number") continue;
       const car = this.cars.get(num);
