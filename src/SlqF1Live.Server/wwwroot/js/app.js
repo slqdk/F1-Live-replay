@@ -25,7 +25,6 @@ const app = {
   pub: null,
   clockOffsetMs: 0,
   map: new TrackMap($("map")),
-  lastPositionRef: null,
   seenRadio: null,
   armedSync: false,
 };
@@ -125,7 +124,6 @@ async function loadRecording(file, { follow, t } = {}) {
     if (h?.session) $("recTitle").textContent = h.session;
     setLoadState(follow ? "" : `${fmtClock(app.player.durationMs)} optaget`);
     if (t) app.player.seek(Number(t) * 1000);
-    app.lastPositionRef = null;
     app.seenRadio = null;
     buildOutline(app.player);
     updateUrl();
@@ -410,10 +408,9 @@ function frame(now) {
   // Banekort: hver frame (interpolation); resten ~6 gange i sekundet
   const circuit = circuitOf(state.SessionInfo);
   app.map.setCircuit(circuit.key, circuit.year);
-  if (state.Position && state.Position !== app.lastPositionRef) {
-    app.lastPositionRef = state.Position;
-    app.map.update(state.Position, now);
-  }
+  // Hver frame: deepMerge opdaterer Position-objektet på stedet (samme reference),
+  // så update() selv ser på den seneste stikprøves tidsstempel
+  if (state.Position) app.map.update(state.Position, now);
   app.map.draw(state, now);
 
   if (now - lastBigRender < 160) return;
