@@ -394,7 +394,9 @@ function esc(s) {
 // ---------- Banekort ----------
 
 /** Banens omrids fra /api/circuit (MultiViewer-data). Udgangspunktet er
- *  TV-retningen (rotation + 90°, y nedad); fit(w, h) drejer derefter banen,
+ *  TV-retningen: drej rotation + 90° og byt x og y (som f1-dash), tegnet med
+ *  y nedad. Ombytningen spejler — uden den kører bilerne den forkerte vej
+ *  rundt (F1's koordinater har y opad). fit(w, h) drejer derefter banen,
  *  så den fylder feltet mest muligt. Svingnumre ligger lidt uden for banen.
  *  Returnerer TV-visningen { angle, rot(x,y) → [x,y], pts, corners, bbox }
  *  samt at(vinkel) og fit(w, h), der giver samme slags visning. */
@@ -410,7 +412,7 @@ export function prepareOutline(d) {
     const c = Math.cos(angle), s = Math.sin(angle);
     const rot = (x, y) => {
       const dx = x - cx, dy = y - cy;
-      return [dx * c - dy * s + cx, dy * c + dx * s + cy];
+      return [dy * c + dx * s, dx * c - dy * s]; // drejet, x↔y byttet
     };
     const pts = xs.map((x, i) => rot(x, ys[i]));
     const corners = cornersRaw.map((k) => {
@@ -435,7 +437,7 @@ export function prepareOutline(d) {
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       for (let i = 0; i < xs.length; i++) {
         const dx = xs[i] - cx, dy = ys[i] - cy;
-        const x = dx * c - dy * s, y = dy * c + dx * s;
+        const x = dy * c + dx * s, y = dx * c - dy * s; // som rot()
         if (x < minX) minX = x; if (x > maxX) maxX = x;
         if (y < minY) minY = y; if (y > maxY) maxY = y;
       }

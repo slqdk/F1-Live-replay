@@ -208,8 +208,11 @@ automatisk".
   F1's Position-data; nyeste layout til og med året), slanker til
   `{key, year, name, rotation, x[], y[], corners[{n,x,y,angle}]}` og gemmer i
   `data/cache/circuits/circuit_<key>_<år>.json`. Fejl huskes i 10 min.
-  Visningen tager udgangspunkt i TV-retningen (rotation + 90° om midten, y
-  nedad) og drejer derefter banen højst ±90°, så den fylder kortfeltet mest
+  Visningen tager udgangspunkt i TV-retningen (drej rotation + 90° om midten
+  og BYT x og y, som f1-dash; tegnet med y nedad). Ombytningen er en spejling
+  og nødvendig: F1's koordinater har y opad, så uden den kører bilerne den
+  forkerte vej rundt (test: Interlagos mod uret, Spa med uret). Derefter
+  drejes banen højst ±90°, så den fylder kortfeltet mest
   muligt (2°-trin; inden for 3 % af det bedste foretrækkes TV-retningen eller
   vinkelret på den). Beregnes kun når feltets størrelse ændres; biler og
   svingnumre (540 enheder ude ad `angle`) følger samme drejning. Navne tegnes kun hvor

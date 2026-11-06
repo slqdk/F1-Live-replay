@@ -5,12 +5,20 @@ import { prepareOutline } from "../../src/SlqF1Live.Server/wwwroot/js/render.js"
 
 const square = { rotation: 0, x: [0, 100, 100, 0, 0, 50, 100, 50, 0, 100], y: [0, 0, 100, 100, 50, 0, 50, 100, 50, 50], corners: [] };
 
-test("omridset drejes rotation + 90° om midten", () => {
-  const o = prepareOutline({ ...square, x: [0, 100, ...square.x.slice(2)], y: [50, 50, ...square.y.slice(2)] });
-  // (0,50) og (100,50) ligger vandret om midten (50,50); efter 90° ligger de lodret
-  const [a, b] = o.pts;
-  assert.ok(Math.abs(a[0] - 50) < 1e-9 && Math.abs(b[0] - 50) < 1e-9, `${a} ${b}`);
-  assert.ok(Math.abs(Math.abs(a[1] - b[1]) - 100) < 1e-9);
+// Skærmkoordinater (y nedad): negativt areal = mod uret, som man ser det
+const area = (pts) => pts.reduce((sum, [x, y], i) => {
+  const [x2, y2] = pts[(i + 1) % pts.length];
+  return sum + x * y2 - x2 * y;
+}, 0) / 2;
+
+test("banen spejles ikke: mod uret i F1's koordinater er mod uret på skærmen", () => {
+  // F1's koordinater har y opad; (0,0)→(100,0)→(100,100)→(0,100) er mod uret
+  const ccw = { x: [0, 50, 100, 100, 100, 100, 50, 0, 0, 0], y: [0, 0, 0, 50, 100, 100, 100, 100, 50, 0], corners: [] };
+  for (const rotation of [0, 90, 258, -37]) {
+    const o = prepareOutline({ ...ccw, rotation });
+    assert.ok(area(o.pts) < 0, `rotation ${rotation}: vises med uret`);
+    assert.ok(area(o.fit(600, 200).pts) < 0, `rotation ${rotation}, tilpasset: vises med uret`);
+  }
 });
 
 test("bilernes positioner får samme transformation som omridset", () => {
@@ -29,8 +37,8 @@ test("svingnumre ligger uden for banen og er med i rammen", () => {
 });
 
 test("en høj bane drejes ned i et bredt felt — og bliver stående i et højt", () => {
-  // Smal, høj bane i TV-retningen (rotation −90 → base 0°)
-  const tall = { rotation: -90, x: [0, 10, 20, 20, 20, 20, 10, 0, 0, 0], y: [0, 0, 0, 100, 200, 300, 300, 300, 200, 100], corners: [] };
+  // Smal bane, der er høj i TV-retningen (rotation 0 → 90° + ombytning)
+  const tall = { rotation: 0, x: [0, 10, 20, 20, 20, 20, 10, 0, 0, 0], y: [0, 0, 0, 100, 200, 300, 300, 300, 200, 100], corners: [] };
   const o = prepareOutline(tall);
   const wide = o.fit(600, 200), high = o.fit(200, 600);
   const size = (v) => [v.bbox.maxX - v.bbox.minX, v.bbox.maxY - v.bbox.minY];
