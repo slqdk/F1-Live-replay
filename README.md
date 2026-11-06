@@ -186,7 +186,7 @@ F1's arkiv og bygger en `.f1rec`, der afspilles som alle andre optagelser.
 
 | Hvad | Hvem |
 |---|---|
-| Visning, `/analyse`, `/events`, `/recordings`, `/media`, `/api/public`, `/api/dev` | alle, medmindre `VIEW_ALLOW`/`VIEW_TOKEN` er sat |
+| Visning, `/analyse`, `/events`, `/recordings`, `/media`, `/api/public`, `/api/dev`, `/api/circuit` | alle, medmindre `VIEW_ALLOW`/`VIEW_TOKEN` er sat |
 | `/admin`, øvrige `/api/*` | `ADMIN_ALLOW` (LAN/WireGuard), eller `?key=<ADMIN_TOKEN>` |
 
 Optagelser med F1 TV-data er til personlig brug. Gør dem ikke offentlige:
@@ -208,6 +208,7 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 | `GET /api/public` | feed/optagelse/næste sessioner |
 | `GET /analyse` | udviklingssiden |
 | `GET /api/dev?year=2026&mode=quali\|race` | sæsonens GP'er, kørere med gab (s og m), hold bedst først |
+| `GET /api/circuit?key=14&year=2026` | banens omrids og svingnumre til banekortet |
 | `/admin`, `/api/status`, `/api/log`, `POST /api/token`, `/api/login`, `/api/feed`, `/api/archive/*` | admin |
 
 ## Udvikling
@@ -225,6 +226,9 @@ dotnet run --project src/SlqF1Live.Server       # lokalt: DATA_DIR=./data PORT=8
   Læs det før ændringer.
 
 ## Licenser for tredjepart
+
+Banekortets omrids og svingnumre kommer fra MultiViewer's åbne API
+(`api.multiviewer.app`) og gemmes i `data/cache/circuits/`.
 
 Teamradio-tekst bruger [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 (MIT), OpenAI's Whisper-modeller (MIT) og Silero VAD (MIT). Modellerne

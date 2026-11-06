@@ -36,7 +36,7 @@ public sealed partial class ServerHost
 
         // ---------- Admin ----------
         if (path is "/admin" or "/admin.html" or "/admin.js" ||
-            path.StartsWith("/api/", StringComparison.Ordinal) && path is not ("/api/public" or "/api/dev"))
+            path.StartsWith("/api/", StringComparison.Ordinal) && path is not ("/api/public" or "/api/dev" or "/api/circuit"))
         {
             if (!Access.IsAdmin(req))
             {
@@ -79,6 +79,11 @@ public sealed partial class ServerHost
         if (path == "/api/public")
         {
             SseServer.WriteJson(res, PublicStatus().ToJsonString());
+            return true;
+        }
+        if (path == "/api/circuit")
+        {
+            await HandleCircuitAsync(ctx);
             return true;
         }
         if (path == "/api/dev")
@@ -237,6 +242,28 @@ public sealed partial class ServerHost
                 return;
         }
         SseServer.WriteJson(res, Err("ukendt API-kald"), 404);
+    }
+
+    /// GET /api/circuit?key=14&year=2026 — banens omrids og svingnumre til banekortet.
+    private async Task HandleCircuitAsync(HttpListenerContext ctx)
+    {
+        var res = ctx.Response;
+        var q = ctx.Request.QueryString;
+        if (!int.TryParse(q["key"], out var key) || key is < 1 or > 999 ||
+            !int.TryParse(q["year"], out var year) || year is < 2018 or > 2100)
+        {
+            SseServer.WriteJson(res, Err("key og year skal være tal"), 400);
+            return;
+        }
+        var json = await Circuits.GetJsonAsync(key, year, _ct);
+        if (json is null)
+        {
+            res.Headers["Cache-Control"] = "no-cache";
+            SseServer.WriteJson(res, Err("ingen banedata lige nu"), 404);
+            return;
+        }
+        res.Headers["Cache-Control"] = "max-age=86400";
+        SseServer.WriteJson(res, json);
     }
 
     /// GET /api/dev?year=2026&mode=quali|race — sæsonudvikling fra OpenF1.

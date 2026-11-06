@@ -27,6 +27,7 @@ public sealed partial class ServerHost : IDisposable
     public SseServer Server { get; }
     public AccessControl Access { get; }
     public DevService Dev { get; }
+    public CircuitService Circuits { get; }
     public TranscriptService Transcripts { get; }
     public HttpClient Http { get; }
     public DateTime StartedUtc { get; } = DateTime.UtcNow;
@@ -63,6 +64,7 @@ public sealed partial class ServerHost : IDisposable
 
         Access = new AccessControl(cfg);
         Dev = new DevService(cfg, log);
+        Circuits = new CircuitService(cfg, log);
         Tokens = new TokenManager(cfg.TokenFile, null, log.Info)
         {
             Username = cfg.F1Username,
@@ -414,6 +416,7 @@ public sealed partial class ServerHost : IDisposable
         Rec.Dispose();
         Server.Dispose();
         Dev.Dispose();
+        Circuits.Dispose();
         Transcripts.Dispose();
         Http.Dispose();
     }

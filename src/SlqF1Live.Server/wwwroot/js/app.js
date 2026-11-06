@@ -134,10 +134,16 @@ async function loadRecording(file, { follow, t } = {}) {
   }
 }
 
-/** Banekortets omrids med det samme: stikprøver af optagelsens Position-linjer. */
+/** Banen (nøgle + år) til banekortet. */
+function circuitOf(si) {
+  return { key: si?.Meeting?.Circuit?.Key ?? si?.Meeting?.Key ?? null, year: Number(String(si?.Path || si?.StartDate || "").slice(0, 4)) || null };
+}
+
+/** Banekortets omrids med det samme: stikprøver af optagelsens Position-linjer
+ *  (reserve, hvis serveren ikke har banens rigtige omrids). */
 function buildOutline(player) {
-  const si = player.state.SessionInfo;
-  app.map.setCircuit(si?.Meeting?.Circuit?.Key ?? si?.Meeting?.Key ?? null);
+  const c = circuitOf(player.state.SessionInfo);
+  app.map.setCircuit(c.key, c.year);
   const pos = player.entries.filter((e) => e.topic === "Position");
   const step = Math.max(1, Math.ceil(pos.length / 700));
   for (let i = 0; i < pos.length; i += step) {
@@ -402,8 +408,8 @@ function frame(now) {
   const clock = app.mode === "live" ? Date.now() + app.clockOffsetMs : p.clockUtcMs();
 
   // Banekort: hver frame (interpolation); resten ~6 gange i sekundet
-  const circuitKey = state.SessionInfo?.Meeting?.Circuit?.Key ?? state.SessionInfo?.Meeting?.Key ?? null;
-  app.map.setCircuit(circuitKey);
+  const circuit = circuitOf(state.SessionInfo);
+  app.map.setCircuit(circuit.key, circuit.year);
   if (state.Position && state.Position !== app.lastPositionRef) {
     app.lastPositionRef = state.Position;
     app.map.update(state.Position, now);
@@ -452,7 +458,7 @@ function statusLine() {
   if (app.mode === "live") {
     const feed = pub?.feed;
     const parts = [`Live: ${app.liveStatus}`];
-    if (feed) parts.push(`F1: ${feed.status}${feed.usingToken ? " (F1 TV)" : ""}`);
+    if (feed) parts.push(`F1: ${feed.status}${feed.usingToken && !feed.status.includes("F1 TV") ? " (F1 TV)" : ""}`);
     if (pub?.recording) parts.push(`optager ${pub.recording.session}`);
     return parts.join(". ");
   }

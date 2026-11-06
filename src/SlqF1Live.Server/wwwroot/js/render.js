@@ -74,7 +74,8 @@ export function renderHeader(state, clockUtcMs, modeLabel) {
   }
   $("clock").textContent = remaining === null ? "–:––:––" : fmtClock(remaining);
 
-  const lc = state.LapCount;
+  // Omgange kun i løb/sprint — i træning og kvalifikation er LapCount en rest fra forrige løb
+  const lc = state.SessionInfo?.Type === "Race" ? state.LapCount : null;
   $("lapcount").textContent = lc?.CurrentLap ? `Omgang ${lc.CurrentLap}${lc.TotalLaps ? ` / ${lc.TotalLaps}` : ""}` : "";
 
   // Banestatus + flagbånd
@@ -392,6 +393,32 @@ function esc(s) {
 
 // ---------- Banekort ----------
 
+/** Banens omrids fra /api/circuit (MultiViewer-data): drejet som på TV
+ *  (rotation + 90°, y nedad) og med svingnumre lidt uden for banen.
+ *  Returnerer { rot(x,y) → [x,y], pts, corners, bbox }. */
+export function prepareOutline(d) {
+  const xs = d.x, ys = d.y;
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const a = (((Number(d.rotation) || 0) + 90) * Math.PI) / 180;
+  const c = Math.cos(a), s = Math.sin(a);
+  const rot = (x, y) => {
+    const dx = x - cx, dy = y - cy;
+    return [dx * c - dy * s + cx, dy * c + dx * s + cy];
+  };
+  const pts = xs.map((x, i) => rot(x, ys[i]));
+  const corners = (d.corners || []).map((k) => {
+    const ka = ((Number(k.angle) || 0) * Math.PI) / 180;
+    const [x, y] = rot(k.x + 540 * Math.cos(ka), k.y + 540 * Math.sin(ka));
+    return { label: String(k.n), x, y };
+  });
+  const bbox = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+  for (const [x, y] of [...pts, ...corners.map((k) => [k.x, k.y])]) {
+    bbox.minX = Math.min(bbox.minX, x); bbox.maxX = Math.max(bbox.maxX, x);
+    bbox.minY = Math.min(bbox.minY, y); bbox.maxY = Math.max(bbox.maxY, y);
+  }
+  return { rot, pts, corners, bbox };
+}
+
 export class TrackMap {
   constructor(canvas) {
     this.canvas = canvas;
@@ -399,21 +426,37 @@ export class TrackMap {
     this.points = new Map();
     this.cars = new Map();
     this.key = null;
+    this.outline = null;
     this.lastSample = null;
     this.dirty = true;
   }
 
-  setCircuit(key) {
+  setCircuit(key, year) {
     if (key === this.key) return;
     this.key = key;
     this.points = new Map();
     this.cars = new Map();
+    this.outline = null;
     this.lastSample = null;
     try {
       const raw = key ? localStorage.getItem(`f1map:${key}`) : null;
       if (raw) for (const [x, y] of JSON.parse(raw)) this.points.set(`${x},${y}`, [x, y]);
     } catch { /* ingen lagring */ }
+    if (key) this.loadOutline(key, year);
     this.dirty = true;
+  }
+
+  /** Rigtigt omrids fra serveren; ellers bygges det af bilernes positioner. */
+  async loadOutline(key, year) {
+    try {
+      const y = Number(year) || new Date().getUTCFullYear();
+      const res = await fetch(`api/circuit?key=${encodeURIComponent(key)}&year=${y}`);
+      if (!res.ok || this.key !== key) return;
+      const d = await res.json();
+      if (this.key !== key || !Array.isArray(d.x) || d.x.length < 10) return;
+      this.outline = prepareOutline(d);
+      this.dirty = true;
+    } catch { /* positionerne må gøre det */ }
   }
 
   save() {
@@ -474,6 +517,7 @@ export class TrackMap {
     const ctx = this.ctx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    if (this.outline) return this._drawOutlined(ctx, state, nowMs, w, h);
     const pts = [...this.points.values()];
     $("mapEmpty").hidden = pts.length > 0 || this.cars.size > 0;
     if (!pts.length && !this.cars.size) return;
@@ -495,30 +539,75 @@ export class TrackMap {
     ctx.fillStyle = "#2a3c56";
     for (const [x, y] of pts) ctx.fillRect(X(x) - 1.6, Y(y) - 1.6, 3.2, 3.2);
 
-    const order = Object.entries(state.TimingData?.Lines || {})
-      .sort((a, b) => (Number(b[1].Line) || 99) - (Number(a[1].Line) || 99))
-      .map(([n]) => n);
-    const nums = order.length ? order.filter((n) => this.cars.has(n)) : [...this.cars.keys()];
+    this._drawCars(ctx, state, nowMs, (x, y) => [X(x), Y(y)]);
+  }
+
+  /** Biler: prik i holdfarve, forreste øverst. Navne kun hvor der er plads —
+   *  i pitten holder flere biler samme sted, og navnene ville flyde sammen. */
+  _drawCars(ctx, state, nowMs, project) {
+    const lines = state.TimingData?.Lines || {};
+    const nums = [...this.cars.keys()].sort((a, b) => (Number(lines[a]?.Line) || 99) - (Number(lines[b]?.Line) || 99));
+    const placed = [];
+    const drawn = [];
     ctx.font = `600 11px "Barlow Semi Condensed", system-ui, sans-serif`;
     ctx.textBaseline = "middle";
     for (const num of nums) {
       const car = this.cars.get(num);
-      if (!car) continue;
       const p = this._interp(car, nowMs);
-      const x = X(p.x), y = Y(p.y);
-      const off = car.status === "OffTrack";
-      ctx.globalAlpha = off ? 0.35 : 1;
+      const [x, y] = project(p.x, p.y);
+      const label = tla(state, num);
+      const box = { x0: x + 7, x1: x + 9 + ctx.measureText(label).width, y0: y - 7, y1: y + 7 };
+      const free = !placed.some((b) => box.x0 < b.x1 && box.x1 > b.x0 && box.y0 < b.y1 && box.y1 > b.y0);
+      if (free) placed.push(box);
+      drawn.push({ num, x, y, label: free ? label : null, off: car.status === "OffTrack" });
+    }
+    for (const d of drawn.reverse()) { // bagerste først, så P1 ligger øverst
+      ctx.globalAlpha = d.off ? 0.35 : 1;
       ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.fillStyle = teamColour(state, num);
+      ctx.arc(d.x, d.y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = teamColour(state, d.num);
       ctx.fill();
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = "#0f1722";
       ctx.stroke();
-      ctx.fillStyle = "#e9eef5";
-      ctx.fillText(tla(state, num), x + 8, y);
+    }
+    ctx.fillStyle = "#e9eef5";
+    for (const d of drawn) {
+      if (!d.label) continue;
+      ctx.globalAlpha = d.off ? 0.35 : 1;
+      ctx.fillText(d.label, d.x + 8, d.y);
     }
     ctx.globalAlpha = 1;
     this.dirty = false;
+  }
+
+  _drawOutlined(ctx, state, nowMs, w, h) {
+    $("mapEmpty").hidden = true;
+    const o = this.outline, b = o.bbox, pad = 16;
+    const s = Math.min((w - pad * 2) / Math.max(1, b.maxX - b.minX), (h - pad * 2) / Math.max(1, b.maxY - b.minY));
+    const ox = (w - (b.maxX - b.minX) * s) / 2, oy = (h - (b.maxY - b.minY) * s) / 2;
+    const X = (x) => ox + (x - b.minX) * s;
+    const Y = (y) => oy + (y - b.minY) * s;
+
+    ctx.beginPath();
+    o.pts.forEach(([x, y], i) => (i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))));
+    ctx.closePath();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#2a3c56";
+    ctx.stroke();
+
+    ctx.font = `500 10px "Barlow Semi Condensed", system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#6f819a";
+    for (const k of o.corners) ctx.fillText(k.label, X(k.x), Y(k.y));
+    ctx.textAlign = "start";
+
+    this._drawCars(ctx, state, nowMs, (x, y) => {
+      const [rx, ry] = o.rot(x, y);
+      return [X(rx), Y(ry)];
+    });
   }
 }

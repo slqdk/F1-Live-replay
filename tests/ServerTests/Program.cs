@@ -148,5 +148,54 @@ if (!OperatingSystem.IsWindows())
     try { Directory.Delete(root, true); } catch (IOException) { }
 }
 
+// ---------- Banekort: CircuitService ----------
+{
+    var raw = System.Text.Json.Nodes.JsonNode.Parse("""
+        {"circuitKey":14,"circuitName":"Interlagos","year":2023,"rotation":258,"meetingName":"x",
+         "x":[0,10.4,20,30,40,50,60,70,80,90,100],"y":[0,1,2,3,4,5,6,7,8,9,10.6],
+         "corners":[{"number":1,"angle":-87.79,"trackPosition":{"x":-2393.43,"y":-8518.95}},
+                    {"number":4,"letter":"a","angle":12,"trackPosition":{"x":5,"y":6}},
+                    {"number":9,"trackPosition":{"x":"bad","y":1}}]}
+        """);
+    var slim = CircuitService.Slim(raw)!;
+    Check(slim is not null && (int)slim["key"]! == 14 && (int)slim["year"]! == 2023 && (double)slim["rotation"]! == 258,
+        "circuit: key, year, rotation kept");
+    Check(slim!["x"]!.AsArray().Count == 11 && (double)slim["x"]![1]! == 10 && (double)slim["y"]![10]! == 11, "circuit: coordinates rounded");
+    var corners = slim["corners"]!.AsArray();
+    Check(corners.Count == 2 && (string)corners[0]!["n"]! == "1" && (string)corners[1]!["n"]! == "4a" && (double)corners[0]!["x"]! == -2393,
+        "circuit: corners slimmed (letter kept, bad entry skipped)");
+    Check(slim["meetingName"] is null, "circuit: unused fields dropped");
+    Check(CircuitService.Slim(System.Text.Json.Nodes.JsonNode.Parse("""{"x":[1,2],"y":[1,2]}""")) is null, "circuit: too few points -> null");
+
+    var calls = 0;
+    var body = raw!.ToJsonString();
+    var handler = new ServerFakeHttp(path => { calls++; return path.EndsWith("/14/2026") ? (200, body) : (404, "{}"); });
+    var croot = Path.Combine(Path.GetTempPath(), "slqf1test_circ_" + Guid.NewGuid().ToString("N")[..8]);
+    using (var svc = new CircuitService(new ServerConfig { DataDir = croot }, new LogBuffer(null, 1), handler))
+    {
+        var j1 = await svc.GetJsonAsync(14, 2026, CancellationToken.None);
+        var j2 = await svc.GetJsonAsync(14, 2026, CancellationToken.None);
+        Check(j1 is not null && j1 == j2 && calls == 1, $"circuit: fetched once, then from disk ({calls} calls)");
+        Check(File.Exists(Path.Combine(croot, "cache", "circuits", "circuit_14_2026.json")), "circuit: cached on disk");
+        var miss1 = await svc.GetJsonAsync(99, 2026, CancellationToken.None);
+        var miss2 = await svc.GetJsonAsync(99, 2026, CancellationToken.None);
+        Check(miss1 is null && miss2 is null && calls == 2, $"circuit: failure remembered, no hammering ({calls} calls)");
+    }
+    try { Directory.Delete(croot, true); } catch (IOException) { }
+}
+
 Console.WriteLine(fails > 0 ? $"\n{fails} FAILURES" : "\nALL SERVER TESTS PASSED");
 return fails > 0 ? 1 : 0;
+
+/// Falsk HTTP til CircuitService-test: (status, body) pr. sti.
+sealed class ServerFakeHttp(Func<string, (int Status, string Body)> respond) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var (status, body) = respond(request.RequestUri!.AbsolutePath);
+        return Task.FromResult(new HttpResponseMessage((System.Net.HttpStatusCode)status)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+        });
+    }
+}

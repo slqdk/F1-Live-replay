@@ -42,6 +42,7 @@ Windows-app'en (WinForms) kører stadig selvstændigt med samme Core.
 | Server/TranscriptService.cs | Teamradio → tekst: VAD + whisper.cpp, transcripts.json, modelhentning |
 | Server/RadioText.cs | Prompt med kørernavne, VAD-parsing, lydkontekst, oprydning af whisper-output |
 | Server/DevService.cs | /api/dev: cache (disk + hukommelse), deling af samtidige hent, opvarmning |
+| Server/CircuitService.cs | /api/circuit: banens omrids + svingnumre (MultiViewer), cache på disk |
 | Server/AccessControl.cs | CIDR, betroede proxies (NPM), admin-/visningsnøgler |
 | Server/wwwroot/js/* | merge.js (samme regler som C#), player.js, render.js, app.js |
 | Server/wwwroot/analyse.* + js/analyse.js, js/devchart.js | Udviklingssiden: filtre, hold-chips, SVG-graf, tabel |
@@ -201,7 +202,18 @@ automatisk".
   Position/CarData; forsinket live = følg filen (hale hvert 2. s) med
   position = hoved − forsinkelse; hoved = max(sidste t, serverur − started).
   Sessionsuret regnes på F1's ur (kalibreret via linjernes `ts`).
-- Banekortets omrids opbygges af positioner og gemmes i localStorage pr. bane.
+- Banekortet: banens rigtige omrids og svingnumre fra `GET /api/circuit?key=<Meeting.Circuit.Key>&year=<år>`
+  (offentlig). CircuitService henter fra MultiViewer's åbne API
+  (`api.multiviewer.app/api/v1/circuits/<key>/<år>`, samme koordinater som
+  F1's Position-data; nyeste layout til og med året), slanker til
+  `{key, year, name, rotation, x[], y[], corners[{n,x,y,angle}]}` og gemmer i
+  `data/cache/circuits/circuit_<key>_<år>.json`. Fejl huskes i 10 min.
+  Visningen drejer alt (omrids og biler) rotation + 90° om midten, y nedad
+  (som på TV); svingnumre 540 enheder ude ad `angle`. Navne tegnes kun hvor
+  der er plads (P1 først) — i pitten holder flere biler samme sted.
+  Uden svar: omridset opbygges af positioner og gemmes i localStorage pr. bane.
+- "Omgang x / y" vises kun når `SessionInfo.Type` er Race (LapCount i træning
+  og kvalifikation er en rest fra forrige løb i F1's cache).
 
 ## F1 TV-auth
 
@@ -335,7 +347,7 @@ stedet snittet af bedste bil pr. GP (regnes i browseren).
 
 ## Adgang
 
-- Admin (/admin, /api/* undtagen /api/public og /api/dev): klient-IP i
+- Admin (/admin, /api/* undtagen /api/public, /api/dev og /api/circuit): klient-IP i
   ADMIN_ALLOW eller ADMIN_TOKEN (?key / Bearer / cookie f1admin).
 - /analyse og /api/dev følger visningens regler (offentlige data fra OpenF1).
 - Forespørgsler med X-Forwarded-For/X-Real-IP fra ikke-betroet afsender regnes
