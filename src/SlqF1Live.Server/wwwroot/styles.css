@@ -200,8 +200,33 @@ button, select, input, textarea { font: inherit; color: inherit; }
   border-bottom: 1px solid rgba(36, 53, 77, .55);
   transition: transform .45s cubic-bezier(.2, .7, .2, 1), opacity .3s;
 }
-.row:nth-child(odd) { background: rgba(21, 32, 48, .55); }
+.row.alt { background: rgba(21, 32, 48, .55); }
 .row.out { opacity: .42; }
+/* Pitprognose (kun i løb): valgt kører + rækken "hvis han pitter nu" */
+.tower.pitable .row:not(.ghost) { cursor: pointer; }
+.row.picked { box-shadow: inset .22em 0 0 var(--text); background: rgba(233, 238, 245, .08); }
+.row.ghost {
+  display: flex;
+  align-items: center;
+  background: rgba(233, 238, 245, .04);
+  border: 1px dashed var(--muted);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  z-index: 1;
+}
+.row.ghost .ghost-text {
+  font: 400 .78em/1.12 var(--font-ui);
+  padding-left: 2.6em;
+  white-space: normal;            /* to linjer, hvis der ikke er plads til én */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.row.ghost .ghost-text b { font-weight: 600; }
+.row.ghost .ghost-detail { color: var(--muted); margin-left: .5em; }
+.row:focus-visible { outline: 2px solid var(--text); outline-offset: -2px; }
 .row.knocked { opacity: .55; }
 .row .c-pos { font-weight: 700; text-align: right; padding-right: .2em; }
 .row .c-pos.up { color: var(--green); }
@@ -479,6 +504,8 @@ body[data-mode="live"] { --chrome: 155px; }
     grid-template-columns: [pos] 1.9em [drv] minmax(3.8em, 1fr) [gap] minmax(4.4em, 1fr) [int] minmax(4.2em, 1fr) [tyre] 3.2em [pit] 2.2em;
   }
   .c-last, .c-best { display: none !important; }
+  .row.ghost .ghost-text { font-size: .72em; line-height: 1.06; padding-left: 2.2em; }
+  .row.ghost .ghost-detail { display: block; margin-left: 0; }
   .pos-label { min-width: 0; }
   .playbar { padding: 8px 16px; }
 }

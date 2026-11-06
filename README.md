@@ -10,6 +10,10 @@ det i browseren, synkront med TV'et, også når du ser løbet forskudt.
   officielle arkiv, og teamradio hentes som mp3.
 - **Egen visning til TV, tablet og telefon** med timing-tårn, gab, dæk,
   sektorer, race control, vejr, teamradio og banekort.
+- **Hvor kommer han ud, hvis han pitter nu?** Klik på en kører i tårnet
+  under et løb eller en sprint. En stiplet række viser placeringen og
+  afstanden til bilerne omkring ham, og banekortet viser stedet. Pittabet
+  pr. bane er inklusive selve stoppet og følger safety car og VSC.
 - **Teamradio som tekst.** F1 sender kun lydfiler, så containeren skriver
   selv radioen ned (whisper.cpp på CPU'en, ingen sky). Teksten står under
   hvert klip, og du vælger, hvilke køreres radio du vil se.
@@ -208,7 +212,7 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 | `GET /api/public` | feed/optagelse/næste sessioner |
 | `GET /analyse` | udviklingssiden |
 | `GET /api/dev?year=2026&mode=quali\|race` | sæsonens GP'er, kørere med gab (s og m), hold bedst først |
-| `GET /api/circuit?key=14&year=2026` | banens omrids og svingnumre til banekortet |
+| `GET /api/circuit?key=14&year=2026` | banens omrids, svingnumre og pittab (banekort og pitprognose) |
 | `/admin`, `/api/status`, `/api/log`, `POST /api/token`, `/api/login`, `/api/feed`, `/api/archive/*` | admin |
 
 ## Udvikling
@@ -216,7 +220,7 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 ```bash
 dotnet run --project tests/CoreTests            # 277 checks (Core)
 dotnet run --project tests/ServerTests          # adgangskontrol + teamradio-tekst
-node --test tests/web/*.test.mjs                # merge-regler + udviklingsgrafen
+node --test tests/web/*.test.mjs                # merge-regler, udviklingsgrafen, banekort, pitprognose
 dotnet run --project src/SlqF1Live.Server       # lokalt: DATA_DIR=./data PORT=8137
 ```
 
@@ -227,8 +231,8 @@ dotnet run --project src/SlqF1Live.Server       # lokalt: DATA_DIR=./data PORT=8
 
 ## Licenser for tredjepart
 
-Banekortets omrids og svingnumre kommer fra MultiViewer's åbne API
-(`api.multiviewer.app`) og gemmes i `data/cache/circuits/`.
+Banekortets omrids, svingnumre og pittab pr. bane kommer fra MultiViewer's
+åbne API (`api.multiviewer.app`) og gemmes i `data/cache/circuits/`.
 
 Teamradio-tekst bruger [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 (MIT), OpenAI's Whisper-modeller (MIT) og Silero VAD (MIT). Modellerne

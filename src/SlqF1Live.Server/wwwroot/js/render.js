@@ -174,12 +174,17 @@ function makeRow(num) {
   return row;
 }
 
-export function renderTower(state) {
+let ghostRow = null;
+
+/** pit (kun i løb): { num, afterNum, main, detail } — rækken for "hvis han pitter
+ *  nu" sættes ind efter den bil, han ville lande bag (afterNum; null = forrest). */
+export function renderTower(state, pit = null) {
   const tower = $("tower");
   const lines = state.TimingData?.Lines || {};
   const app = state.TimingAppData?.Lines || {};
   const type = state.SessionInfo?.Type || "";
   const isRace = type === "Race" || /sprint$/i.test(state.SessionInfo?.Name || "") && type !== "Qualifying";
+  const pitable = type === "Race"; // pitprognose: kun løb og sprint
   const part = Number(state.TimingData?.SessionPart) || 0;
 
   $("hGap").textContent = isRace ? "Gab" : "Til P1";
@@ -201,12 +206,44 @@ export function renderTower(state) {
 
   const now = performance.now();
   const seen = new Set();
+  // Pitrækken: plads lige efter den bil, han ville lande bag
+  let slot = -1;
+  if (pit) {
+    const ai = pit.afterNum == null ? -1 : order.findIndex((o) => o.n === pit.afterNum);
+    slot = pit.afterNum == null ? 0 : ai >= 0 ? ai + 1 : -1;
+  }
+  if (slot >= 0) {
+    if (!ghostRow) {
+      ghostRow = document.createElement("div");
+      ghostRow.className = "row ghost";
+      ghostRow.setAttribute("role", "row");
+      ghostRow.innerHTML = `<span class="ghost-text" role="cell"><b></b> <span class="ghost-detail"></span></span>`;
+      ghostRow._main = ghostRow.querySelector("b");
+      ghostRow._detail = ghostRow.querySelector(".ghost-detail");
+    }
+    if (ghostRow.parentNode !== tower) tower.appendChild(ghostRow);
+    ghostRow.hidden = false;
+    ghostRow.style.transform = `translateY(calc(var(--row-h) * ${slot}))`;
+    setText(ghostRow._main, pit.main);
+    setText(ghostRow._detail, pit.detail);
+    ghostRow.title = pit.detail ? `${pit.main}. ${pit.detail}. Klik for at lukke.` : `${pit.main}. Klik for at lukke.`;
+  } else if (ghostRow) ghostRow.hidden = true;
+  tower.classList.toggle("pitable", pitable);
+
   order.forEach(({ n, line }, i) => {
     seen.add(n);
     let row = rows.get(n);
     if (!row) { row = makeRow(n); rows.set(n, row); tower.appendChild(row); }
     const el = row._el;
-    row.style.transform = `translateY(calc(var(--row-h) * ${i}))`;
+    const at = slot >= 0 && i >= slot ? i + 1 : i;
+    row.style.transform = `translateY(calc(var(--row-h) * ${at}))`;
+    row.classList.toggle("alt", at % 2 === 0); // striber efter plads, ikke DOM-rækkefølge
+    row.classList.toggle("picked", !!pit && pit.num === n);
+    if (row._pitable !== pitable) {
+      row._pitable = pitable;
+      row.tabIndex = pitable ? 0 : -1;
+      row.title = pitable ? "Klik: hvor kommer han ud, hvis han pitter nu?" : "";
+    }
 
     const pos = Number(line.Position) || i + 1;
     const prev = lastPos.get(n);
@@ -266,18 +303,18 @@ export function renderTower(state) {
     el.tyre.title = comp ? `${comp.toLowerCase()}${truthy(st?.New) ? ", nye" : ", brugte"}` : "";
     setText(el.tyreLaps, st?.TotalLaps !== undefined ? String(st.TotalLaps) : "");
 
-    let pit = "";
-    if (out) pit = `<span class="badge dnf">UDE</span>`;
-    else if (truthy(line.InPit)) pit = `<span class="badge">PIT</span>`;
-    else if (truthy(line.PitOut)) pit = `<span class="badge out">OUT</span>`;
-    else if (Number(line.NumberOfPitStops) > 0) pit = String(line.NumberOfPitStops);
-    if (el.pit._h !== pit) { el.pit.innerHTML = pit; el.pit._h = pit; }
+    let badge = "";
+    if (out) badge = `<span class="badge dnf">UDE</span>`;
+    else if (truthy(line.InPit)) badge = `<span class="badge">PIT</span>`;
+    else if (truthy(line.PitOut)) badge = `<span class="badge out">OUT</span>`;
+    else if (Number(line.NumberOfPitStops) > 0) badge = String(line.NumberOfPitStops);
+    if (el.pit._h !== badge) { el.pit.innerHTML = badge; el.pit._h = badge; }
   });
 
   for (const [n, row] of rows) {
     if (!seen.has(n)) { row.remove(); rows.delete(n); lastPos.delete(n); }
   }
-  tower.style.height = `calc(var(--row-h) * ${order.length})`;
+  tower.style.height = `calc(var(--row-h) * ${order.length + (slot >= 0 ? 1 : 0)})`;
 }
 
 function bestOf(line, part) {
@@ -469,6 +506,7 @@ export class TrackMap {
     this.points = new Map();
     this.cars = new Map();
     this.outline = null;
+    this.circuitRaw = null;
     this.view = null;
     this.lastSample = null;
     try {
@@ -488,6 +526,7 @@ export class TrackMap {
       const d = await res.json();
       if (this.key !== key || !Array.isArray(d.x) || d.x.length < 10) return;
       this.outline = prepareOutline(d);
+      this.circuitRaw = d;
       this.view = null;
       this.dirty = true;
     } catch { /* positionerne må gøre det */ }
@@ -646,9 +685,60 @@ export class TrackMap {
     for (const k of o.corners) ctx.fillText(k.label, X(k.x), Y(k.y));
     ctx.textAlign = "start";
 
-    this._drawCars(ctx, state, nowMs, (x, y) => {
+    const project = (x, y) => {
       const [rx, ry] = o.rot(x, y);
       return [X(rx), Y(ry)];
-    });
+    };
+    this._drawCars(ctx, state, nowMs, project);
+    this._drawGhost(ctx, state, nowMs, project);
+  }
+
+  /** Pitprognosens spøgelse: stiplet ring hvor køreren ville komme ud.
+   *  Placeres ud fra bilen han lander bag (eller foran), med jævn fart
+   *  langs banen (lap/outline-punkter); banens punkter ligger i kørselsretningen. */
+  _drawGhost(ctx, state, nowMs, project) {
+    const g = this.ghost, raw = this.circuitRaw;
+    if (!g || !raw) return;
+    const N = raw.x.length;
+    const nearest = (num) => {
+      const car = this.cars.get(num);
+      if (!car) return null;
+      const p = this._interp(car, nowMs);
+      let best = -1, bd = Infinity;
+      for (let i = 0; i < N; i++) {
+        const dx = raw.x[i] - p.x, dy = raw.y[i] - p.y, d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best;
+    };
+    const perSec = N / Math.max(30, g.lapTime || 90);
+    let idx = null;
+    if (g.aheadNum != null) { const a = nearest(g.aheadNum); if (a !== null) idx = a - g.toAhead * perSec; }
+    if (idx === null && g.behindNum != null) { const b = nearest(g.behindNum); if (b !== null) idx = b + g.toBehind * perSec; }
+    const me = this.cars.get(g.num);
+    if (me) { // ring om den rigtige bil, så man kan finde ham
+      const p = this._interp(me, nowMs);
+      const [x, y] = project(p.x, p.y);
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#e9eef5";
+      ctx.stroke();
+    }
+    if (idx === null) return;
+    idx = ((idx % N) + N) % N;
+    const i0 = Math.floor(idx), i1 = (i0 + 1) % N, f = idx - i0;
+    const [x, y] = project(raw.x[i0] + (raw.x[i1] - raw.x[i0]) * f, raw.y[i0] + (raw.y[i1] - raw.y[i0]) * f);
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = teamColour(state, g.num);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = `600 11px "Barlow Semi Condensed", system-ui, sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#e9eef5";
+    ctx.fillText(`${tla(state, g.num)} efter pit`, x + 10, y);
   }
 }

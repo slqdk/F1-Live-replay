@@ -5,6 +5,7 @@
 // URL: ?mode=live|delay|replay&file=<fil.f1rec>&t=<sek> — bogmærk fx en TV-visning.
 
 import { deepMerge } from "./merge.js";
+import { raceOrder, pitLossNow, predictPit, describePit, secondsOf } from "./pit.js";
 import { RecordingPlayer } from "./player.js";
 import { renderHeader, renderTower, renderRaceControl, renderRadio, renderRadioFilter, TrackMap, fmtClock, tla } from "./render.js";
 
@@ -312,6 +313,60 @@ function toggleDriver(code) {
   setHidden(next);
 }
 
+// ---------- Pitprognose (kun i løb) ----------
+// Klik på en kører i tårnet: hvor kommer han ud, hvis han pitter nu?
+
+const isRaceSession = (state) => state.SessionInfo?.Type === "Race";
+
+function togglePit(num) {
+  const state = app.mode === "live" ? app.liveState : app.player.state;
+  if (!isRaceSession(state)) return;
+  app.pitPick = app.pitPick === num ? null : num;
+  lastBigRender = 0; // tegn med det samme
+}
+
+$("tower").addEventListener("click", (e) => {
+  if (e.target.closest(".row.ghost")) { togglePit(app.pitPick); return; } // luk igen
+  const row = e.target.closest(".row[data-num]");
+  if (row) togglePit(row.dataset.num);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && app.pitPick) { app.pitPick = null; lastBigRender = 0; }
+});
+$("tower").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const row = e.target.closest(".row[data-num]");
+  if (row) { e.preventDefault(); togglePit(row.dataset.num); }
+});
+
+/** Typisk omgangstid lige nu (median af sidste omgang) — til kortets spøgelse. */
+function medianLap(state) {
+  const t = Object.values(state.TimingData?.Lines || {})
+    .map((l) => { const v = String(l?.LastLapTime?.Value || ""); const m = /^(\d+):(\d+\.\d+)$/.exec(v); return m ? Number(m[1]) * 60 + Number(m[2]) : secondsOf(v); })
+    .filter((v) => v && v > 30 && v < 300)
+    .sort((a, b) => a - b);
+  return t.length ? t[t.length >> 1] : 90;
+}
+
+function pitInfo(state) {
+  const session = state.SessionInfo?.Path || "";
+  if (session !== app.pitSession) { app.pitSession = session; app.pitPick = null; } // ny session: nulstil
+  if (!app.pitPick || !isRaceSession(state)) return null;
+  const order = raceOrder(state);
+  const loss = pitLossNow(state, app.map.circuitRaw, app.pitPick);
+  const p = predictPit(order, app.pitPick, loss.seconds);
+  if (!p) { app.pitPick = null; return null; }
+  return {
+    num: p.num,
+    afterNum: p.inPit || loss.kind === "red" ? p.num : p.ahead?.num ?? null,
+    ...describePit(p, loss, (n) => tla(state, n)),
+    ghost: p.inPit || loss.kind === "red" ? { num: p.num } : {
+      num: p.num, aheadNum: p.ahead?.num ?? null, behindNum: p.behind?.num ?? null,
+      toAhead: p.ahead?.by ?? 0, toBehind: p.behind?.by ?? 0, lapTime: medianLap(state),
+    },
+  };
+}
+
 // ---------- Kontroller ----------
 
 document.querySelectorAll(".modes button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
@@ -418,7 +473,9 @@ function frame(now) {
 
   const modeLabel = app.mode === "delay" ? `forsinket ${Math.round(p.delayMs / 1000)} s` : app.mode === "replay" && p.file ? "afspilning" : "";
   renderHeader(state, clock, modeLabel);
-  renderTower(state);
+  const pit = pitInfo(state);
+  renderTower(state, pit);
+  app.map.ghost = pit?.ghost || null;
   renderRaceControl(state);
   updateFilterLabel(renderRadioFilter(state, radio.hidden, toggleDriver));
   const caps = renderRadio(state, mediaStem(), playRadio, {

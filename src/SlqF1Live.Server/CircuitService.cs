@@ -34,7 +34,7 @@ public sealed class CircuitService : IDisposable
     public async Task<string?> GetJsonAsync(int key, int year, CancellationToken ct)
     {
         var id = $"{key}_{year}";
-        var file = Path.Combine(_dir, $"circuit_{id}.json");
+        var file = Path.Combine(_dir, $"circuit_v2_{id}.json"); // v2: med pittab
         if (File.Exists(file)) return await File.ReadAllTextAsync(file, ct);
         if (_failedUntil.TryGetValue(id, out var until) && DateTime.UtcNow < until) return null;
 
@@ -78,7 +78,8 @@ public sealed class CircuitService : IDisposable
         _log.Info($"banekort: kunne ikke hente bane {key} ({why}) — tegner ud fra bilernes positioner");
     }
 
-    /// Kun det banekortet bruger: { key, year, name, rotation, x[], y[], corners[{n, x, y, angle}] }.
+    /// Kun det visningen bruger: { key, year, name, rotation, x[], y[], corners[{n, x, y, angle}],
+    /// pitLoss: {normal, sc, vsc} } — pittab i sekunder inkl. et normalt stop (null hvis ukendt).
     public static JsonObject? Slim(JsonNode? raw)
     {
         if (raw?["x"] is not JsonArray xs || raw["y"] is not JsonArray ys || xs.Count < 10 || xs.Count != ys.Count) return null;
@@ -113,6 +114,21 @@ public sealed class CircuitService : IDisposable
             }
         }
         var rotation = Num(raw["rotation"]);
+        JsonObject? pitLoss = null;
+        if (raw["pitLoss"] is JsonObject pl)
+        {
+            static double Loss(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var str)
+                && double.TryParse(str, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d)
+                ? d : Num(n);
+            double normal = Loss(pl["normal"]), sc = Loss(pl["sc"]), vsc = Loss(pl["vsc"]);
+            if (normal is > 5 and < 60)
+                pitLoss = new JsonObject
+                {
+                    ["normal"] = normal,
+                    ["sc"] = sc is > 3 and < 60 ? sc : Math.Round(normal * 0.65, 2),
+                    ["vsc"] = vsc is > 3 and < 60 ? vsc : Math.Round(normal * 0.7, 2),
+                };
+        }
         return new JsonObject
         {
             ["key"] = raw["circuitKey"]?.DeepClone(),
@@ -122,6 +138,7 @@ public sealed class CircuitService : IDisposable
             ["x"] = x,
             ["y"] = y,
             ["corners"] = corners,
+            ["pitLoss"] = pitLoss,
         };
     }
 

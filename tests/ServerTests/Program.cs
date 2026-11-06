@@ -155,7 +155,8 @@ if (!OperatingSystem.IsWindows())
          "x":[0,10.4,20,30,40,50,60,70,80,90,100],"y":[0,1,2,3,4,5,6,7,8,9,10.6],
          "corners":[{"number":1,"angle":-87.79,"trackPosition":{"x":-2393.43,"y":-8518.95}},
                     {"number":4,"letter":"a","angle":12,"trackPosition":{"x":5,"y":6}},
-                    {"number":9,"trackPosition":{"x":"bad","y":1}}]}
+                    {"number":9,"trackPosition":{"x":"bad","y":1}}],
+         "pitLoss":{"normal":"21.84","sc":"14.16","vsc":15.05}}
         """);
     var slim = CircuitService.Slim(raw)!;
     Check(slim is not null && (int)slim["key"]! == 14 && (int)slim["year"]! == 2023 && (double)slim["rotation"]! == 258,
@@ -166,6 +167,15 @@ if (!OperatingSystem.IsWindows())
         "circuit: corners slimmed (letter kept, bad entry skipped)");
     Check(slim["meetingName"] is null, "circuit: unused fields dropped");
     Check(CircuitService.Slim(System.Text.Json.Nodes.JsonNode.Parse("""{"x":[1,2],"y":[1,2]}""")) is null, "circuit: too few points -> null");
+    var pl = slim["pitLoss"]!;
+    Check((double)pl["normal"]! == 21.84 && (double)pl["sc"]! == 14.16 && (double)pl["vsc"]! == 15.05,
+        "circuit: pit loss as numbers (strings and numbers accepted)");
+    static System.Text.Json.Nodes.JsonNode? Loss(string json) => CircuitService.Slim(System.Text.Json.Nodes.JsonNode.Parse(
+        $$"""{"x":[0,1,2,3,4,5,6,7,8,9],"y":[0,1,2,3,4,5,6,7,8,9]{{json}}}"""))!["pitLoss"];
+    Check(Loss("") is null && Loss(""","pitLoss":{"normal":"x"}""") is null && Loss(""","pitLoss":{"normal":"250"}""") is null,
+        "circuit: missing or nonsense pit loss -> null");
+    var partial = Loss(""","pitLoss":{"normal":"20"}""")!;
+    Check((double)partial["sc"]! == 13 && (double)partial["vsc"]! == 14, "circuit: missing SC/VSC loss estimated from normal");
 
     var calls = 0;
     var body = raw!.ToJsonString();
@@ -176,7 +186,7 @@ if (!OperatingSystem.IsWindows())
         var j1 = await svc.GetJsonAsync(14, 2026, CancellationToken.None);
         var j2 = await svc.GetJsonAsync(14, 2026, CancellationToken.None);
         Check(j1 is not null && j1 == j2 && calls == 1, $"circuit: fetched once, then from disk ({calls} calls)");
-        Check(File.Exists(Path.Combine(croot, "cache", "circuits", "circuit_14_2026.json")), "circuit: cached on disk");
+        Check(File.Exists(Path.Combine(croot, "cache", "circuits", "circuit_v2_14_2026.json")), "circuit: cached on disk");
         var miss1 = await svc.GetJsonAsync(99, 2026, CancellationToken.None);
         var miss2 = await svc.GetJsonAsync(99, 2026, CancellationToken.None);
         Check(miss1 is null && miss2 is null && calls == 2, $"circuit: failure remembered, no hammering ({calls} calls)");

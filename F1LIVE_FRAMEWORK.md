@@ -42,7 +42,7 @@ Windows-app'en (WinForms) kører stadig selvstændigt med samme Core.
 | Server/TranscriptService.cs | Teamradio → tekst: VAD + whisper.cpp, transcripts.json, modelhentning |
 | Server/RadioText.cs | Prompt med kørernavne, VAD-parsing, lydkontekst, oprydning af whisper-output |
 | Server/DevService.cs | /api/dev: cache (disk + hukommelse), deling af samtidige hent, opvarmning |
-| Server/CircuitService.cs | /api/circuit: banens omrids + svingnumre (MultiViewer), cache på disk |
+| Server/CircuitService.cs | /api/circuit: banens omrids, svingnumre og pittab (MultiViewer), cache på disk |
 | Server/AccessControl.cs | CIDR, betroede proxies (NPM), admin-/visningsnøgler |
 | Server/wwwroot/js/* | merge.js (samme regler som C#), player.js, render.js, app.js |
 | Server/wwwroot/analyse.* + js/analyse.js, js/devchart.js | Udviklingssiden: filtre, hold-chips, SVG-graf, tabel |
@@ -206,8 +206,11 @@ automatisk".
   (offentlig). CircuitService henter fra MultiViewer's åbne API
   (`api.multiviewer.app/api/v1/circuits/<key>/<år>`, samme koordinater som
   F1's Position-data; nyeste layout til og med året), slanker til
-  `{key, year, name, rotation, x[], y[], corners[{n,x,y,angle}]}` og gemmer i
-  `data/cache/circuits/circuit_<key>_<år>.json`. Fejl huskes i 10 min.
+  `{key, year, name, rotation, x[], y[], corners[{n,x,y,angle}], pitLoss}` og gemmer i
+  `data/cache/circuits/circuit_v2_<key>_<år>.json` (v2 = med pittab; ældre
+  filer uden versions-tag ignoreres). Fejl huskes i 10 min.
+  `pitLoss` = `{normal, sc, vsc}` i sekunder som tal (MultiViewer sender
+  tekst), eller null. Mangler sc/vsc, anslås de til 65 %/70 % af normal.
   Visningen tager udgangspunkt i TV-retningen (drej rotation + 90° om midten
   og BYT x og y, som f1-dash; tegnet med y nedad). Ombytningen er en spejling
   og nødvendig: F1's koordinater har y opad, så uden den kører bilerne den
@@ -220,6 +223,29 @@ automatisk".
   Uden svar: omridset opbygges af positioner og gemmes i localStorage pr. bane.
 - "Omgang x / y" vises kun når `SessionInfo.Type` er Race (LapCount i træning
   og kvalifikation er en rest fra forrige løb i F1's cache).
+- **Pitprognose** (pit.js, kun når `SessionInfo.Type` er Race, dvs. løb og
+  sprint): klik (Enter/mellemrum) på en kører i tårnet → en stiplet række
+  viser, hvor han kommer ud, hvis han pitter nu: placering, afstand til bilen
+  foran og bagved og pittabet. Klik igen, på rækken eller Esc lukker; ny
+  session nulstiller.
+  - Gab: `GapToLeader` i sekunder; for overhalede ("1 L") lægges
+    `IntervalToPositionAhead` sammen ned gennem feltet (ukendt interval =
+    1 s, markeret "ca."). Udgåede/stoppede tæller ikke.
+  - Pittab efter `TrackStatus`: 1/2 normal, 4 sc, 6/7 vsc, 5 rødt flag
+    (dækskift uden tab). Fra banens `pitLoss`; uden den 22/14/15 s
+    ("anslået"). **Tallet indeholder allerede et normalt stop på 2,5 s**
+    (målt mod 65 stop i Interlagos 2023+2025 via Jolpica: median 22,1 s
+    samlet tab mod MultiViewer's 21,8 s), så stoppet lægges ikke til igen.
+    Har holdet stoppet i løbet, bruges holdets median `PitStopTime`
+    (PitStopSeries, 1,5–15 s) i stedet for de 2,5 s.
+  - Placering: kørerens gab + pittab sammenlignet med de andres gab nu
+    (antager at ingen andre pitter samtidig). Rækken sættes efter bilen han
+    lander bag; tårnets striber følger pladsen, ikke DOM-rækkefølgen.
+  - Banekortet (kun med MultiViewer-omrids): hvid ring om køreren og en
+    stiplet ring i holdfarve, hvor han ville være: bilen foran's nærmeste
+    omridspunkt minus afstanden i s × punkter pr. s (punkter / median
+    `LastLapTime`, ellers 90 s), ellers ud fra bilen bagved. Omridset
+    ligger i kørselsretningen.
 
 ## F1 TV-auth
 
