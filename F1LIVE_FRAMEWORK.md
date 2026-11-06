@@ -208,8 +208,11 @@ automatisk".
   F1's Position-data; nyeste layout til og med året), slanker til
   `{key, year, name, rotation, x[], y[], corners[{n,x,y,angle}]}` og gemmer i
   `data/cache/circuits/circuit_<key>_<år>.json`. Fejl huskes i 10 min.
-  Visningen drejer alt (omrids og biler) rotation + 90° om midten, y nedad
-  (som på TV); svingnumre 540 enheder ude ad `angle`. Navne tegnes kun hvor
+  Visningen tager udgangspunkt i TV-retningen (rotation + 90° om midten, y
+  nedad) og drejer derefter banen højst ±90°, så den fylder kortfeltet mest
+  muligt (2°-trin; inden for 3 % af det bedste foretrækkes TV-retningen eller
+  vinkelret på den). Beregnes kun når feltets størrelse ændres; biler og
+  svingnumre (540 enheder ude ad `angle`) følger samme drejning. Navne tegnes kun hvor
   der er plads (P1 først) — i pitten holder flere biler samme sted.
   Uden svar: omridset opbygges af positioner og gemmes i localStorage pr. bane.
 - "Omgang x / y" vises kun når `SessionInfo.Type` er Race (LapCount i træning

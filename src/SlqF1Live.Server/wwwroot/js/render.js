@@ -393,30 +393,60 @@ function esc(s) {
 
 // ---------- Banekort ----------
 
-/** Banens omrids fra /api/circuit (MultiViewer-data): drejet som på TV
- *  (rotation + 90°, y nedad) og med svingnumre lidt uden for banen.
- *  Returnerer { rot(x,y) → [x,y], pts, corners, bbox }. */
+/** Banens omrids fra /api/circuit (MultiViewer-data). Udgangspunktet er
+ *  TV-retningen (rotation + 90°, y nedad); fit(w, h) drejer derefter banen,
+ *  så den fylder feltet mest muligt. Svingnumre ligger lidt uden for banen.
+ *  Returnerer TV-visningen { angle, rot(x,y) → [x,y], pts, corners, bbox }
+ *  samt at(vinkel) og fit(w, h), der giver samme slags visning. */
 export function prepareOutline(d) {
   const xs = d.x, ys = d.y;
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-  const a = (((Number(d.rotation) || 0) + 90) * Math.PI) / 180;
-  const c = Math.cos(a), s = Math.sin(a);
-  const rot = (x, y) => {
-    const dx = x - cx, dy = y - cy;
-    return [dx * c - dy * s + cx, dy * c + dx * s + cy];
-  };
-  const pts = xs.map((x, i) => rot(x, ys[i]));
-  const corners = (d.corners || []).map((k) => {
+  const base = (((Number(d.rotation) || 0) + 90) * Math.PI) / 180;
+  const cornersRaw = (d.corners || []).map((k) => {
     const ka = ((Number(k.angle) || 0) * Math.PI) / 180;
-    const [x, y] = rot(k.x + 540 * Math.cos(ka), k.y + 540 * Math.sin(ka));
-    return { label: String(k.n), x, y };
+    return { label: String(k.n), x: k.x + 540 * Math.cos(ka), y: k.y + 540 * Math.sin(ka) };
   });
-  const bbox = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
-  for (const [x, y] of [...pts, ...corners.map((k) => [k.x, k.y])]) {
-    bbox.minX = Math.min(bbox.minX, x); bbox.maxX = Math.max(bbox.maxX, x);
-    bbox.minY = Math.min(bbox.minY, y); bbox.maxY = Math.max(bbox.maxY, y);
-  }
-  return { rot, pts, corners, bbox };
+  const at = (angle) => {
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const rot = (x, y) => {
+      const dx = x - cx, dy = y - cy;
+      return [dx * c - dy * s + cx, dy * c + dx * s + cy];
+    };
+    const pts = xs.map((x, i) => rot(x, ys[i]));
+    const corners = cornersRaw.map((k) => {
+      const [x, y] = rot(k.x, k.y);
+      return { label: k.label, x, y };
+    });
+    const bbox = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    for (const [x, y] of [...pts, ...corners.map((k) => [k.x, k.y])]) {
+      bbox.minX = Math.min(bbox.minX, x); bbox.maxX = Math.max(bbox.maxX, x);
+      bbox.minY = Math.min(bbox.minY, y); bbox.maxY = Math.max(bbox.maxY, y);
+    }
+    return { angle, rot, pts, corners, bbox };
+  };
+  /** Drejning (højst ±90° fra TV-retningen) der giver det største kort i et
+   *  w×h-felt. Er flere inden for 3 % af det bedste, vælges den der ligger
+   *  tættest på TV-retningen eller vinkelret på den — så banen ikke står skævt
+   *  uden grund. */
+  const fit = (w, h) => {
+    const cands = [];
+    for (let deg = -90; deg < 90; deg += 2) {
+      const a = base + (deg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (let i = 0; i < xs.length; i++) {
+        const dx = xs[i] - cx, dy = ys[i] - cy;
+        const x = dx * c - dy * s, y = dy * c + dx * s;
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+      cands.push({ deg, scale: Math.min(w / Math.max(1, maxX - minX), h / Math.max(1, maxY - minY)) });
+    }
+    const best = Math.max(...cands.map((k) => k.scale));
+    const pref = (deg) => Math.min(Math.abs(deg), Math.abs(Math.abs(deg) - 90) + 0.5);
+    const pick = cands.filter((k) => k.scale >= best * 0.97).sort((p, q) => pref(p.deg) - pref(q.deg))[0];
+    return at(base + (pick.deg * Math.PI) / 180);
+  };
+  return { ...at(base), at, fit };
 }
 
 export class TrackMap {
@@ -437,6 +467,7 @@ export class TrackMap {
     this.points = new Map();
     this.cars = new Map();
     this.outline = null;
+    this.view = null;
     this.lastSample = null;
     try {
       const raw = key ? localStorage.getItem(`f1map:${key}`) : null;
@@ -455,6 +486,7 @@ export class TrackMap {
       const d = await res.json();
       if (this.key !== key || !Array.isArray(d.x) || d.x.length < 10) return;
       this.outline = prepareOutline(d);
+      this.view = null;
       this.dirty = true;
     } catch { /* positionerne må gøre det */ }
   }
@@ -584,7 +616,13 @@ export class TrackMap {
 
   _drawOutlined(ctx, state, nowMs, w, h) {
     $("mapEmpty").hidden = true;
-    const o = this.outline, b = o.bbox, pad = 16;
+    const pad = 16;
+    // Drej banen, så den fylder feltet (beregnes kun når feltets størrelse ændres)
+    if (!this.view || this.viewSize !== `${w}x${h}`) {
+      this.view = this.outline.fit(w - pad * 2, h - pad * 2);
+      this.viewSize = `${w}x${h}`;
+    }
+    const o = this.view, b = o.bbox;
     const s = Math.min((w - pad * 2) / Math.max(1, b.maxX - b.minX), (h - pad * 2) / Math.max(1, b.maxY - b.minY));
     const ox = (w - (b.maxX - b.minX) * s) / 2, oy = (h - (b.maxY - b.minY) * s) / 2;
     const X = (x) => ox + (x - b.minX) * s;

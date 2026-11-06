@@ -27,3 +27,17 @@ test("svingnumre ligger uden for banen og er med i rammen", () => {
   const far = Math.hypot(x - 50, y - 50) > Math.hypot(50, 50);
   assert.ok(far, "label skal ligge længere ude end hjørnet");
 });
+
+test("en høj bane drejes ned i et bredt felt — og bliver stående i et højt", () => {
+  // Smal, høj bane i TV-retningen (rotation −90 → base 0°)
+  const tall = { rotation: -90, x: [0, 10, 20, 20, 20, 20, 10, 0, 0, 0], y: [0, 0, 0, 100, 200, 300, 300, 300, 200, 100], corners: [] };
+  const o = prepareOutline(tall);
+  const wide = o.fit(600, 200), high = o.fit(200, 600);
+  const size = (v) => [v.bbox.maxX - v.bbox.minX, v.bbox.maxY - v.bbox.minY];
+  const [ww, wh] = size(wide), [hw, hh] = size(high);
+  assert.ok(ww > wh * 3, `bredt felt: ${ww.toFixed(0)}×${wh.toFixed(0)}`);
+  assert.ok(hh > hw * 3, `højt felt: ${hw.toFixed(0)}×${hh.toFixed(0)}`);
+  assert.equal(high.angle, o.angle, "i et højt felt beholdes TV-retningen");
+  // Bilerne følger samme drejning som omridset
+  assert.deepEqual(wide.rot(tall.x[4], tall.y[4]), wide.pts[4]);
+});
