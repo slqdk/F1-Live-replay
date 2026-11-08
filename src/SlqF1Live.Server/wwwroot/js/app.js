@@ -7,7 +7,8 @@
 import { deepMerge } from "./merge.js";
 import { raceOrder, pitLossNow, predictPit, describePit, secondsOf } from "./pit.js";
 import { RecordingPlayer } from "./player.js";
-import { renderHeader, renderTower, renderRaceControl, renderRadio, renderRadioFilter, TrackMap, fmtClock, tla } from "./render.js";
+import { renderHeader, renderTower, renderRaceControl, renderRadio, renderRadioFilter, TrackMap, fmtClock, tla, teamColour } from "./render.js";
+import { LapChart, lapSeries, lapRows, paceStats, seriesStyles, fmtLap, fmtSec, gapSeries, gapTrend, stintRanges, COMPOUND } from "./lapchart.js";
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -328,7 +329,7 @@ function togglePit(num) {
 $("tower").addEventListener("click", (e) => {
   if (e.target.closest(".row.ghost")) { togglePit(app.pitPick); return; } // luk igen
   const row = e.target.closest(".row[data-num]");
-  if (row) togglePit(row.dataset.num);
+  if (row) (cmp.on ? toggleCmpPick : togglePit)(row.dataset.num);
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && app.pitPick) { app.pitPick = null; lastBigRender = 0; }
@@ -336,7 +337,7 @@ document.addEventListener("keydown", (e) => {
 $("tower").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
   const row = e.target.closest(".row[data-num]");
-  if (row) { e.preventDefault(); togglePit(row.dataset.num); }
+  if (row) { e.preventDefault(); (cmp.on ? toggleCmpPick : togglePit)(row.dataset.num); }
 });
 
 /** Typisk omgangstid lige nu (median af sidste omgang) — til kortets spøgelse. */
@@ -365,6 +366,232 @@ function pitInfo(state) {
       toAhead: p.ahead?.by ?? 0, toBehind: p.behind?.by ?? 0, lapTime: medianLap(state),
     },
   };
+}
+
+// ---------- Sammenlign omgangstider ----------
+// "Sammenlign" i topbjælken: klik på to kørere i tårnet → deres omgangstider
+// som graf. Omgangene kommer fra serveren (/api/laps, ud fra optagelsen); i
+// forsinket visning og afspilning vises kun omgange op til det sted, man er.
+
+const cmp = { on: false, picks: [null, null], last: 1, data: null, inflight: "", error: "", sig: "", view: "laps", timer: null };
+try {
+  const saved = JSON.parse(store.get("f1cmp", "{}"));
+  cmp.on = saved.on === true;
+  if (["laps", "gap", "table"].includes(saved.view)) cmp.view = saved.view;
+  if (Array.isArray(saved.picks)) cmp.picks = [0, 1].map((i) => (/^\d+$/.test(saved.picks[i]) ? saved.picks[i] : null));
+} catch { /* ugyldig gemt værdi */ }
+const lapChart = new LapChart($("cmpChart"), $("cmpTip"));
+
+const picked = () => cmp.picks.filter(Boolean);
+const saveCmp = () => store.set("f1cmp", JSON.stringify({ on: cmp.on, picks: cmp.picks, view: cmp.view }));
+const lapFile = () => (app.mode === "live" ? app.pub?.recording?.file || null : app.player.file);
+const lapKey = () => `${lapFile()}|${picked().join(",")}`;
+
+function setCompare(on) {
+  cmp.on = on;
+  document.body.classList.toggle("comparing", on);
+  $("cmpBtn").setAttribute("aria-pressed", String(on));
+  clearInterval(cmp.timer);
+  cmp.timer = on ? setInterval(fetchLaps, 10000) : null;
+  if (on) { app.pitPick = null; fetchLaps(); }
+  cmp.sig = "";
+  saveCmp();
+  lastBigRender = 0;
+}
+
+/** To faste pladser (A fuld streg, B stiplet), så en kører beholder sin
+ *  stil, når den anden skiftes. Er begge optaget, erstattes den ældste. */
+function toggleCmpPick(num) {
+  const i = cmp.picks.indexOf(num);
+  if (i >= 0) cmp.picks[i] = null;
+  else {
+    const free = cmp.picks.indexOf(null);
+    const slot = free >= 0 ? free : 1 - cmp.last;
+    cmp.picks[slot] = num;
+    cmp.last = slot;
+    // Telefon: grafen står under tårnet — vis den, når nummer to er valgt
+    if (picked().length === 2 && matchMedia("(max-width: 960px)").matches) {
+      requestAnimationFrame(() => $("cmpPanel").scrollIntoView({ behavior: "smooth", block: "nearest" }));
+    }
+  }
+  saveCmp();
+  cmp.sig = "";
+  fetchLaps();
+  lastBigRender = 0;
+}
+
+async function fetchLaps() {
+  const file = lapFile(), key = lapKey();
+  if (!cmp.on || !file || !picked().length || cmp.inflight === key) return;
+  cmp.inflight = key;
+  try {
+    const res = await fetch(`api/laps?file=${encodeURIComponent(file)}&drivers=${picked().join(",")}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const j = await res.json();
+    if (lapFile() === file) { cmp.data = { key, file, drivers: j.drivers || {} }; cmp.error = ""; }
+  } catch {
+    cmp.error = "Kunne ikke hente omgangstiderne. Prøver igen om lidt.";
+  } finally {
+    if (cmp.inflight === key) cmp.inflight = "";
+    cmp.sig = "";
+  }
+}
+
+$("cmpBtn").addEventListener("click", () => setCompare(!cmp.on));
+function setCmpView(view) {
+  cmp.view = view;
+  document.querySelectorAll("[data-cmpview]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.cmpview === view)));
+  saveCmp();
+  cmp.sig = "";
+  lastBigRender = 0;
+}
+document.querySelectorAll("[data-cmpview]").forEach((b) => b.addEventListener("click", () => setCmpView(b.dataset.cmpview)));
+$("cmpLegend").addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-num]");
+  if (chip) toggleCmpPick(chip.dataset.num);
+});
+
+const escHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const swatch = (st) => `<svg class="sw" width="22" height="8" aria-hidden="true"><line x1="1" x2="21" y1="4" y2="4" stroke="${st.colour}"${st.dash ? ' stroke-dasharray="5 3"' : ""}/></svg>`;
+const flagNote = (l) => (l?.flags ? ` <small>${[...l.flags].map((f) => ({ P: "pit", S: "SC", V: "VSC", R: "rødt" })[f]).join(" ")}</small>` : "");
+/** "NOR 0,154 s" — hvem der er hurtigst og med hvor meget (a, b i sekunder). */
+const faster = (a, b, tA, tB, dec = 3) => (a == null || b == null ? "" : Math.abs(a - b) < 0.0005 ? "lige" : `${escHtml(a < b ? tA : tB)} ${fmtSec(a - b, dec)}`);
+
+/** Stationære stoptider (s) for en kører fra PitStopSeries. */
+function stopTimes(state, num) {
+  const out = [];
+  const walk = (v) => {
+    if (!v || typeof v !== "object") return;
+    if (String(v.RacingNumber) === num && Number.isFinite(Number(v.PitStopTime)) && Number(v.PitStopTime) > 0) out.push(Number(v.PitStopTime));
+    for (const k of Object.keys(v)) walk(v[k]);
+  };
+  walk(state.PitStopSeries);
+  return out;
+}
+
+/** Ekstra rækker i løb: afstand + tendens, dæk nu, pitstop, fartfælde. */
+function raceRows(state, A, B, tr) {
+  let html = "";
+  const line = (n) => state.TimingData?.Lines?.[n] || {};
+  if (B) {
+    const gaps = gapSeries(A.series, B.series);
+    const cur = gaps[gaps.length - 1];
+    if (cur) {
+      const [lead, trail] = cur.gap >= 0 ? [A.tla, B.tla] : [B.tla, A.tla];
+      let txt = `${escHtml(trail)} ${fmtSec(cur.gap, cur.approx ? 1 : 3)} bag ${escHtml(lead)} <small>omg. ${cur.lap}</small>`;
+      const trend = gapTrend(gaps, 5);
+      if (trend) {
+        const closing = -trend.slope * Math.sign(cur.gap || 1); // > 0: bagerste henter
+        if (closing > 0.05) {
+          txt += ` · ${escHtml(trail)} henter ${fmtSec(closing, 2)}/omg.`;
+          const left = Number(state.LapCount?.TotalLaps) - Number(state.LapCount?.CurrentLap);
+          const n = Math.ceil(Math.abs(cur.gap) / closing);
+          if (Number.isFinite(left) && left > 0 && n <= left) txt += ` <small>(når ham om ca. ${n} omg.)</small>`;
+        } else if (closing < -0.05) txt += ` · ${escHtml(lead)} trækker fra med ${fmtSec(-closing, 2)}/omg.`;
+        else txt += " · stabilt";
+      }
+      html += `<tr><th scope="row" title="Afstand efter seneste fælles omgang; tendens over de sidste grønne omgange">Afstand</th><td colspan="3" class="wide">${txt}</td></tr>`;
+    }
+  }
+  const tyre = (x) => {
+    const st = x.stints[x.stints.length - 1];
+    const cur = Object.values(state.TimingAppData?.Lines?.[x.num]?.Stints || {}).pop();
+    if (!st) return "–";
+    const age = Number(cur?.TotalLaps) || st.laps;
+    return `<span class="tyre-dot" style="background:${st.colour}"></span>${st.letter} <small>${age} omg.</small>`;
+  };
+  html += tr("Dæk nu", "Dækblanding og omgange på dækket", tyre(A), B ? tyre(B) : "", "");
+  const stops = (x) => {
+    const n = Number(line(x.num).NumberOfPitStops) || 0;
+    const t = stopTimes(state, x.num);
+    return `${n}${t.length ? ` <small>${t.map((v) => v.toFixed(1).replace(".", ",")).join(" · ")} s</small>` : ""}`;
+  };
+  html += tr("Stop", "Antal pitstop og stoptider (stillestående)", stops(A), B ? stops(B) : "", "");
+  // Topfart: højeste af F1's fartmålinger (I1, I2, mållinje, fartfælde) på seneste omgang
+  const top = (x) => Math.max(0, ...Object.values(line(x.num).Speeds || {}).map((v) => Number(v?.Value) || 0)) || null;
+  const sa = top(A), sb = B ? top(B) : null;
+  if (sa || sb) {
+    const diff = sa && sb && sa !== sb ? `${escHtml(sa > sb ? A.tla : B.tla)} +${Math.abs(sa - sb)} km/t` : "";
+    html += tr("Topfart", "Højeste af F1's fartmålinger (I1, I2, mållinje, fartfælde) på seneste omgang",
+      sa ? `${sa} <small>km/t</small>` : "–", sb ? `${sb} <small>km/t</small>` : "–", diff);
+  }
+  return html;
+}
+
+function renderCompare(state) {
+  if (!cmp.on) return;
+  const file = lapFile();
+  if (file && picked().length && cmp.data?.key !== lapKey() && cmp.inflight !== lapKey()) fetchLaps();
+  const cutoff = app.mode === "live" ? Infinity : app.player.positionMs;
+  const data = cmp.data?.file === file ? cmp.data.drivers : null;
+  const chartEl = $("cmpChart");
+  const styles = seriesStyles(cmp.picks[0] ? teamColour(state, cmp.picks[0]) : null, cmp.picks[1] ? teamColour(state, cmp.picks[1]) : null);
+  // Valgte pladser: [{num, tla, series, style}] — A før B; en plads kan være tom
+  const sel = cmp.picks.map((num, i) => num && {
+    num, tla: tla(state, num), series: data ? lapSeries(data[num], cutoff) : [],
+    style: i ? styles.b || seriesStyles(teamColour(state, num), teamColour(state, num)).b : styles.a,
+  });
+  const used = sel.filter(Boolean);
+  for (const x of used) x.stints = stintRanges(state.TimingAppData?.Lines?.[x.num]?.Stints);
+  const lines = state.TimingData?.Lines || {};
+  const sig = [file, cmp.picks.join(","), ...used.map((x) => `${x.tla}:${x.series.length}:${x.series.at(-1)?.s}:${x.series.at(-1)?.g}:` +
+      `${x.stints.map((q) => q.letter + q.laps).join("")}:${lines[x.num]?.NumberOfPitStops}:${Object.values(lines[x.num]?.Speeds || {}).map((v) => v?.Value).join(",")}`),
+    chartEl.clientWidth, chartEl.clientHeight, cmp.view, cmp.error].join("|");
+  if (sig === cmp.sig) return;
+  cmp.sig = sig;
+
+  $("cmpLegend").innerHTML = used
+    .map((x) => `<button type="button" class="cmp-chip" data-num="${x.num}" title="Fjern ${escHtml(x.tla)}">${swatch(x.style)}${escHtml(x.tla)}<span class="x" aria-hidden="true">×</span><span class="sr">fjern</span></button>`).join("");
+
+  let hint = "";
+  if (!file) hint = app.mode === "replay" ? "Vælg en optagelse for at se omgangstider." : "Ingen optagelse at hente omgange fra lige nu.";
+  else if (!used.length) hint = "Klik på to kørere i tårnet for at sammenligne deres omgangstider.";
+  else if (cmp.error) hint = cmp.error;
+  else if (!data) hint = "Henter omgangstider…";
+  else if (!used.some((x) => x.series.length)) hint = "Ingen omgangstider endnu.";
+  else if (used.length === 1) hint = `${used[0].tla} er valgt. Klik på en kører mere${cmp.view === "gap" ? " for at se afstanden mellem dem" : ""}.`;
+  $("cmpHint").textContent = hint;
+  $("cmpHint").hidden = !hint;
+
+  const part = (x) => x && { tla: x.tla, series: x.series, stints: x.stints, ...x.style };
+  const table = cmp.view === "table";
+  chartEl.hidden = table;
+  $("cmpTable").hidden = !table;
+  if (!table) lapChart.render({ kind: cmp.view, a: part(sel[0]), b: part(sel[1]) });
+
+  // Nøgletal: seneste fælles omgang, snit af de sidste fælles grønne omgange, bedste
+  const [A, B] = used; // A = første valgte plads, B = anden (hvis to)
+  const stats = $("cmpStats");
+  if (!A || !used.some((x) => x.series.length)) stats.innerHTML = "";
+  else {
+    const p = paceStats(A.series, B ? B.series : null, 5);
+    const rows = lapRows(A.series, B ? B.series : []).filter((r) => r.a?.s != null && (!B || r.b?.s != null));
+    const last = rows[rows.length - 1];
+    const cell = (l) => (l?.s != null ? `${fmtLap(l.s)}${flagNote(l)}` : "–");
+    const range = p.laps.length ? `omg. ${p.laps[0]}${p.laps.length > 1 ? `–${p.laps[p.laps.length - 1]}` : ""}` : "";
+    const head = `<thead><tr><th></th><th scope="col">${swatch(A.style)}${escHtml(A.tla)}</th>${B ? `<th scope="col">${swatch(B.style)}${escHtml(B.tla)}</th><th scope="col">Hurtigst</th>` : ""}</tr></thead>`;
+    const tr = (label, title, a, b, fa) => `<tr><th scope="row"${title ? ` title="${escHtml(title)}"` : ""}>${label}</th><td>${a}</td>${B ? `<td>${b}</td><td>${fa}</td>` : ""}</tr>`;
+    stats.innerHTML = head + "<tbody>" +
+      (last ? tr(`Seneste <small>omg. ${last.lap}</small>`, "", cell(last.a), cell(last.b), faster(last.a?.s, last.b?.s, A.tla, B?.tla)) : "") +
+      (p.laps.length ? tr(`Snit <small>${p.laps.length} omg.</small>`, `Gennemsnit af ${range}: de seneste omgange uden pit, safety car og VSC${B ? ", som begge har kørt" : ""}`,
+        fmtLap(p.avgA), fmtLap(p.avgB), faster(p.avgA, p.avgB, A.tla, B?.tla)) : "") +
+      tr("Bedste", "Hurtigste omgang (ind- og udomgange tæller ikke)",
+        p.bestA ? `${fmtLap(p.bestA.s)} <small class="sub">omg. ${p.bestA.lap}</small>` : "–",
+        p.bestB ? `${fmtLap(p.bestB.s)} <small class="sub">omg. ${p.bestB.lap}</small>` : "–",
+        faster(p.bestA?.s, p.bestB?.s, A.tla, B?.tla)) +
+      raceRows(state, A, B, tr) +
+      "</tbody>";
+  }
+
+  // Tabel: alle omgange, nyeste først
+  if (table) {
+    const rows = A ? lapRows(A.series, B ? B.series : []).reverse() : [];
+    $("cmpTable").innerHTML = !rows.length ? "" :
+      `<table class="cmp-laps"><thead><tr><th scope="col">Omg.</th><th scope="col">${escHtml(A.tla)}</th>${B ? `<th scope="col">${escHtml(B.tla)}</th><th scope="col">Hurtigst</th>` : ""}</tr></thead><tbody>` +
+      rows.map((r) => `<tr><th scope="row">${r.lap}</th><td>${r.a?.s != null ? fmtLap(r.a.s) : "–"}${flagNote(r.a)}</td>` +
+        (B ? `<td>${r.b?.s != null ? fmtLap(r.b.s) : "–"}${flagNote(r.b)}</td><td>${faster(r.a?.s, r.b?.s, A.tla, B.tla)}</td>` : "") + "</tr>").join("") +
+      "</tbody></table>";
+  }
 }
 
 // ---------- Kontroller ----------
@@ -473,9 +700,11 @@ function frame(now) {
 
   const modeLabel = app.mode === "delay" ? `forsinket ${Math.round(p.delayMs / 1000)} s` : app.mode === "replay" && p.file ? "afspilning" : "";
   renderHeader(state, clock, modeLabel);
-  const pit = pitInfo(state);
-  renderTower(state, pit);
+  const pit = cmp.on ? null : pitInfo(state);
+  renderTower(state, pit, cmp.on ? cmp.picks : null);
   app.map.ghost = pit?.ghost || null;
+  app.map.marked = cmp.on ? cmp.picks : null;
+  renderCompare(state);
   renderRaceControl(state);
   updateFilterLabel(renderRadioFilter(state, radio.hidden, toggleDriver));
   const caps = renderRadio(state, mediaStem(), playRadio, {
@@ -527,4 +756,6 @@ await refreshPublic();
 setInterval(refreshPublic, 15000);
 const startMode = ["live", "delay", "replay"].includes(params.get("mode")) ? params.get("mode") : "live";
 await setMode(startMode, { file: params.get("file") || undefined, t: params.get("t") || undefined });
+setCmpView(cmp.view);
+setCompare(cmp.on);
 requestAnimationFrame(frame);

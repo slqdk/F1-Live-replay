@@ -194,6 +194,61 @@ if (!OperatingSystem.IsWindows())
     try { Directory.Delete(croot, true); } catch (IOException) { }
 }
 
+// ---------- Omgangstider: LapTable + LapService (syntetiske linjer) ----------
+{
+    static string Td(long t, string lines) => "{\"t\":" + t + ",\"type\":\"feed\",\"topic\":\"TimingData\",\"data\":{\"Lines\":{" + lines + "}},\"ts\":\"x\"}";
+    static string Ts(long t, string st) => "{\"t\":" + t + ",\"type\":\"feed\",\"topic\":\"TrackStatus\",\"data\":{\"Status\":\"" + st + "\",\"Message\":\"x\"},\"ts\":\"x\"}";
+    var lroot = Path.Combine(Path.GetTempPath(), "slqf1test_laps_" + Guid.NewGuid().ToString("N")[..8]);
+    Directory.CreateDirectory(lroot);
+    var lfile = Path.Combine(lroot, "2026-11-08_Test_Race.f1rec");
+    var lines = new List<string>
+    {
+        """{"type":"header","version":1}""",
+        // forældet snapshot fra forrige session: 24 omgange — må ikke blive til en omgang
+        """{"t":0,"type":"snapshot","data":{"TrackStatus":{"Status":"1"},"TimingData":{"Lines":{"1":{"NumberOfLaps":24,"LastLapTime":{"Value":"1:20.000"}},"4":{"NumberOfLaps":24}}}}}""",
+        Td(1000, "\"1\":{\"NumberOfLaps\":1,\"LastLapTime\":{\"Value\":\"1:25.619\"}}"),            // ny session: 1 < 24
+        Td(1500, "\"4\":{\"NumberOfLaps\":1}"),                                                     // tid i en senere besked
+        Td(1600, "\"4\":{\"LastLapTime\":{\"Value\":\"1:26.100\"}}"),
+        Td(2000, "\"1\":{\"InPit\":true}"),                                                         // indomgang
+        Td(2500, "\"1\":{\"NumberOfLaps\":2,\"LastLapTime\":{\"Value\":\"1:30.500\"}}"),
+        Td(2600, "\"1\":{\"InPit\":false,\"PitOut\":true}"),                                      // udomgang
+        Ts(2700, "4"),
+        Td(3000, "\"1\":{\"NumberOfLaps\":3,\"LastLapTime\":{\"Value\":\"1:48.000\"}}"),
+        Ts(3100, "1"),
+        Td(4000, "\"1\":{\"NumberOfLaps\":4,\"LastLapTime\":{\"Value\":\"1:40.000\"}}"),        // SC sluttede i omgangen
+        Td(5000, "\"1\":{\"NumberOfLaps\":5,\"LastLapTime\":{\"Value\":\"1:16.256\"}}"),
+        Td(7000, "\"1\":{\"GapToLeader\":\"+3.267\"}"),                                         // gab efter stregen
+        Td(7100, "\"1\":{\"GapToLeader\":\"+3.300\"}"),                                         // senere: tæller ikke
+        Td(7200, "\"4\":{\"GapToLeader\":\"LAP 3\"}"),                                           // føreren: "LAP n" før stregen
+        Td(7300, "\"4\":{\"NumberOfLaps\":2,\"LastLapTime\":{\"Value\":\"1:20.000\"}}"),
+    };
+    File.WriteAllText(lfile, string.Join("\n", lines) + "\n" + "{\"t\":6000,\"type\":\"feed\",\"topic\":\"TimingData\",\"data\":{\"Lines\":{\"1\":{\"NumberOfLaps\":6,");  // halv linje til sidst
+    var laps = new LapService(lroot);
+    var j = System.Text.Json.Nodes.JsonNode.Parse(laps.GetJson("2026-11-08_Test_Race.f1rec")!)!;
+    var d1 = j["drivers"]!["1"]!.AsArray();
+    string LapStr(System.Text.Json.Nodes.JsonNode? n) => $"{n![0]}:{n[2]?.ToString() ?? "-"}:{n[3]}@{n[1]}";
+    Check(string.Join(" ", d1.Select(LapStr)) == "1:85619:@1000 2:90500:P@2500 3:108000:PS@3000 4:100000:S@4000 5:76256:@5000",
+        $"laps: lap list with pit/SC flags ({string.Join(" ", d1.Select(LapStr))})");
+    var d4 = j["drivers"]!["4"]!.AsArray();
+    Check(d4.Count == 2 && LapStr(d4[0]) == "1:86100:@1500", $"laps: time in a later message ({string.Join(" ", d4.Select(LapStr))})");
+    Check((int?)d4[1]![4] == 0, "laps: the leader's gap is 0");
+    Check((long)j["t"]! == 7300, "laps: half line at the end is not read yet");
+    Check((int)d1[4]![4]! == 3267 && d1[0]![4] is null, "laps: first gap to leader after the line is the lap's gap");
+    Check(LapTable.GapMs("LAP 26") == 0 && LapTable.GapMs("+1.5") == 1500 && LapTable.GapMs("1 L") is null && LapTable.GapMs("") is null,
+        "laps: gap parsing (leader 0, lapped unknown)");
+
+    File.AppendAllText(lfile, "\"LastLapTime\":{\"Value\":\"1:16.100\"}}}},\"ts\":\"x\"}\n");
+    var j2 = System.Text.Json.Nodes.JsonNode.Parse(laps.GetJson("2026-11-08_Test_Race.f1rec", new HashSet<string> { "1" })!)!;
+    var d1b = j2["drivers"]!["1"]!.AsArray();
+    Check(d1b.Count == 6 && LapStr(d1b[5]) == "6:76100:@6000" && j2["drivers"]!["4"] is null,
+        "laps: incremental read completes the line; drivers= filters");
+    File.WriteAllText(lfile, lines[0] + "\n" + Td(100, "\"1\":{\"NumberOfLaps\":1,\"LastLapTime\":{\"Value\":\"1:30.000\"}}") + "\n");
+    var j3 = System.Text.Json.Nodes.JsonNode.Parse(laps.GetJson("2026-11-08_Test_Race.f1rec")!)!;
+    Check(j3["drivers"]!["1"]!.AsArray().Count == 1, "laps: shorter file (replaced) starts over");
+    Check(laps.GetJson("../x.f1rec") is null && laps.GetJson("missing.f1rec") is null, "laps: unsafe or missing name -> null");
+    try { Directory.Delete(lroot, true); } catch (IOException) { }
+}
+
 Console.WriteLine(fails > 0 ? $"\n{fails} FAILURES" : "\nALL SERVER TESTS PASSED");
 return fails > 0 ? 1 : 0;
 

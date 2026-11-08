@@ -177,8 +177,9 @@ function makeRow(num) {
 let ghostRow = null;
 
 /** pit (kun i løb): { num, afterNum, main, detail } — rækken for "hvis han pitter
- *  nu" sættes ind efter den bil, han ville lande bag (afterNum; null = forrest). */
-export function renderTower(state, pit = null) {
+ *  nu" sættes ind efter den bil, han ville lande bag (afterNum; null = forrest).
+ *  picks (sammenligning): [nrA, nrB] — markeres; klik vælger i stedet for pit. */
+export function renderTower(state, pit = null, picks = null) {
   const tower = $("tower");
   const lines = state.TimingData?.Lines || {};
   const app = state.TimingAppData?.Lines || {};
@@ -228,7 +229,8 @@ export function renderTower(state, pit = null) {
     setText(ghostRow._detail, pit.detail);
     ghostRow.title = pit.detail ? `${pit.main}. ${pit.detail}. Klik for at lukke.` : `${pit.main}. Klik for at lukke.`;
   } else if (ghostRow) ghostRow.hidden = true;
-  tower.classList.toggle("pitable", pitable);
+  const clickMode = picks ? "cmp" : pitable ? "pit" : "";
+  tower.classList.toggle("pitable", !!clickMode);
 
   order.forEach(({ n, line }, i) => {
     seen.add(n);
@@ -239,10 +241,13 @@ export function renderTower(state, pit = null) {
     row.style.transform = `translateY(calc(var(--row-h) * ${at}))`;
     row.classList.toggle("alt", at % 2 === 0); // striber efter plads, ikke DOM-rækkefølge
     row.classList.toggle("picked", !!pit && pit.num === n);
-    if (row._pitable !== pitable) {
-      row._pitable = pitable;
-      row.tabIndex = pitable ? 0 : -1;
-      row.title = pitable ? "Klik: hvor kommer han ud, hvis han pitter nu?" : "";
+    row.classList.toggle("cmp-a", !!picks && picks[0] === n);
+    row.classList.toggle("cmp-b", !!picks && picks[1] === n);
+    if (row._click !== clickMode) {
+      row._click = clickMode;
+      row.tabIndex = clickMode ? 0 : -1;
+      row.title = clickMode === "cmp" ? "Klik: vælg til sammenligning af omgangstider"
+        : clickMode === "pit" ? "Klik: hvor kommer han ud, hvis han pitter nu?" : "";
     }
 
     const pos = Number(line.Position) || i + 1;
@@ -614,6 +619,7 @@ export class TrackMap {
     for (const [x, y] of pts) ctx.fillRect(X(x) - 1.6, Y(y) - 1.6, 3.2, 3.2);
 
     this._drawCars(ctx, state, nowMs, (x, y) => [X(x), Y(y)]);
+    this._drawMarked(ctx, nowMs, (x, y) => [X(x), Y(y)]);
   }
 
   /** Biler: prik i holdfarve, forreste øverst. Navne kun hvor der er plads —
@@ -691,6 +697,24 @@ export class TrackMap {
     };
     this._drawCars(ctx, state, nowMs, project);
     this._drawGhost(ctx, state, nowMs, project);
+    this._drawMarked(ctx, nowMs, project);
+  }
+
+  /** Sammenligning: ring om de to valgte biler (B stiplet, som i grafen). */
+  _drawMarked(ctx, nowMs, project) {
+    (this.marked || []).forEach((num, i) => {
+      const car = num && this.cars.get(num);
+      if (!car) return;
+      const p = this._interp(car, nowMs);
+      const [x, y] = project(p.x, p.y);
+      ctx.setLineDash(i ? [3, 3] : []);
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#e9eef5";
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
   }
 
   /** Pitprognosens spøgelse: stiplet ring hvor køreren ville komme ud.

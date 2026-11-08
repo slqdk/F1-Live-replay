@@ -43,6 +43,7 @@ Windows-app'en (WinForms) kører stadig selvstændigt med samme Core.
 | Server/RadioText.cs | Prompt med kørernavne, VAD-parsing, lydkontekst, oprydning af whisper-output |
 | Server/DevService.cs | /api/dev: cache (disk + hukommelse), deling af samtidige hent, opvarmning |
 | Server/CircuitService.cs | /api/circuit: banens omrids, svingnumre og pittab (MultiViewer), cache på disk |
+| Server/LapService.cs | /api/laps: omgangstider pr. kører ud fra en optagelse (trinvis læsning) |
 | Server/AccessControl.cs | CIDR, betroede proxies (NPM), admin-/visningsnøgler |
 | Server/wwwroot/js/* | merge.js (samme regler som C#), player.js, render.js, app.js |
 | Server/wwwroot/analyse.* + js/analyse.js, js/devchart.js | Udviklingssiden: filtre, hold-chips, SVG-graf, tabel |
@@ -223,6 +224,40 @@ automatisk".
   Uden svar: omridset opbygges af positioner og gemmes i localStorage pr. bane.
 - "Omgang x / y" vises kun når `SessionInfo.Type` er Race (LapCount i træning
   og kvalifikation er en rest fra forrige løb i F1's cache).
+- **Sammenlign** (knap i topbjælken; lapchart.js): klik på to kørere i
+  tårnet (to faste pladser: A fuld streg/cirkler, B stiplet/firkanter; en
+  tredje erstatter den ældste) → panel i stedet for race control og
+  teamradio (desktop) / øverst i sidekolonnen (telefon, rulles frem ved
+  kører nr. 2). Visninger: **Tider** (omgangstid pr. omgang; y-skalaen
+  dækker grønne omgange, pit/SC går over kanten som pil; pit-omgange hule,
+  SC/VSC/rødt flag som bånd), **Afstand** (gab pr. omgang, flade i farven
+  på den, der er foran) og **Tabel**. Dækstints (TimingAppData) som bånd
+  under x-aksen. Nøgletal: seneste fælles omgang, snit af de sidste 5
+  fælles grønne omgange, bedste (ikke pit-omgange), afstand + tendens
+  (hældning over de sidste grønne omgange; "når ham om ca. N omg." hvis
+  inden for de resterende), dæk nu, stop (NumberOfPitStops + PitStopTime),
+  topfart (højeste af Speeds på seneste omgang). Holdkammerater: B's farve
+  gøres lysere. Valg og visning i localStorage `f1cmp`. Pitprognosen er
+  slået fra, mens Sammenlign er tændt.
+  - Data: `GET /api/laps?file=<fil>.f1rec[&drivers=1,12]` (visningsadgang,
+    no-cache) → `{file, t, drivers: {"<nr>": [[omgang, t_ms, tid_ms|null,
+    "flag", gab_ms|null], …]}}`. Hentes hvert 10. s mens panelet er åbent.
+    Visningen viser kun omgange med t ≤ afspilningens position (live: alle).
+  - LapService læser filen trinvis (offset; en halv sidste linje venter;
+    kortere fil = start forfra) og parser kun TimingData/TrackStatus-linjer
+    og snapshots. En omgang er fuldført, når `NumberOfLaps` stiger (kommer
+    i samme besked som `LastLapTime` — set i Interlagos 2026); tiden er
+    `LastLapTime` fra samme eller en senere besked. Falder `NumberOfLaps`,
+    startes forfra (forældede data fra F1's cache før sessionen). Snapshots
+    giver aldrig omgange (kan være fra forrige session), kun pit-status.
+  - Flag pr. omgang: P = `InPit` sand i omgangen eller `PitOut` slog til
+    (ind- og udomgang); S/V/R = TrackStatus 4 / 6-7 / 5 på noget tidspunkt i
+    omgangen. Gab = første `GapToLeader` efter stregen (≤ 10 s; samme
+    tidtagningspunkt for alle — tidspunkterne for stregen alene svinger
+    ±0,5 s); føreren = 0 (hans "LAP n" kommer lige før `NumberOfLaps`);
+    overhalet ("1 L") = null, så bruger visningen tidspunkterne (ca.).
+- Tårnet: tydelig streg mellem rækkerne og hver anden række lysere;
+  striberne følger pladsen.
 - **Pitprognose** (pit.js, kun når `SessionInfo.Type` er Race, dvs. løb og
   sprint): klik (Enter/mellemrum) på en kører i tårnet → en stiplet række
   viser, hvor han kommer ud, hvis han pitter nu: placering, afstand til bilen
@@ -379,7 +414,7 @@ stedet snittet af bedste bil pr. GP (regnes i browseren).
 
 ## Adgang
 
-- Admin (/admin, /api/* undtagen /api/public, /api/dev og /api/circuit): klient-IP i
+- Admin (/admin, /api/* undtagen /api/public, /api/dev, /api/circuit og /api/laps): klient-IP i
   ADMIN_ALLOW eller ADMIN_TOKEN (?key / Bearer / cookie f1admin).
 - /analyse og /api/dev følger visningens regler (offentlige data fra OpenF1).
 - Forespørgsler med X-Forwarded-For/X-Real-IP fra ikke-betroet afsender regnes

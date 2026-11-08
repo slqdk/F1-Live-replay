@@ -36,7 +36,7 @@ public sealed partial class ServerHost
 
         // ---------- Admin ----------
         if (path is "/admin" or "/admin.html" or "/admin.js" ||
-            path.StartsWith("/api/", StringComparison.Ordinal) && path is not ("/api/public" or "/api/dev" or "/api/circuit"))
+            path.StartsWith("/api/", StringComparison.Ordinal) && path is not ("/api/public" or "/api/dev" or "/api/circuit" or "/api/laps"))
         {
             if (!Access.IsAdmin(req))
             {
@@ -89,6 +89,11 @@ public sealed partial class ServerHost
         if (path == "/api/dev")
         {
             await HandleDevAsync(ctx);
+            return true;
+        }
+        if (path == "/api/laps")
+        {
+            HandleLaps(ctx);
             return true;
         }
         if (path is "/analyse" or "/analyse.html")
@@ -264,6 +269,28 @@ public sealed partial class ServerHost
         }
         res.Headers["Cache-Control"] = "max-age=86400";
         SseServer.WriteJson(res, json);
+    }
+
+    /// GET /api/laps?file=<optagelse>.f1rec[&drivers=1,4] — omgangstider pr. kører
+    /// (sammenligning i visningen). Hver omgang har optagelsens t, så visningen
+    /// kun viser omgange op til det sted, der afspilles.
+    private void HandleLaps(HttpListenerContext ctx)
+    {
+        var res = ctx.Response;
+        var q = ctx.Request.QueryString;
+        var file = q["file"] ?? "";
+        if (!SseServer.IsSafeRecordingName(file))
+        {
+            SseServer.WriteJson(res, Err("ukendt optagelse"), 400);
+            return;
+        }
+        var only = q["drivers"] is { Length: > 0 } ds
+            ? ds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(d => d.All(char.IsAsciiDigit)).Take(30).ToHashSet()
+            : null;
+        res.Headers["Cache-Control"] = "no-cache";
+        var json = Laps.GetJson(file, only);
+        if (json is null) SseServer.WriteJson(res, Err("ukendt optagelse"), 404);
+        else SseServer.WriteJson(res, json);
     }
 
     /// GET /api/dev?year=2026&mode=quali|race — sæsonudvikling fra OpenF1.

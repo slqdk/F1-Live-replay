@@ -28,6 +28,7 @@ public sealed partial class ServerHost : IDisposable
     public AccessControl Access { get; }
     public DevService Dev { get; }
     public CircuitService Circuits { get; }
+    public LapService Laps { get; }
     public TranscriptService Transcripts { get; }
     public HttpClient Http { get; }
     public DateTime StartedUtc { get; } = DateTime.UtcNow;
@@ -65,6 +66,7 @@ public sealed partial class ServerHost : IDisposable
         Access = new AccessControl(cfg);
         Dev = new DevService(cfg, log);
         Circuits = new CircuitService(cfg, log);
+        Laps = new LapService(cfg.RecordingsDir);
         Tokens = new TokenManager(cfg.TokenFile, null, log.Info)
         {
             Username = cfg.F1Username,

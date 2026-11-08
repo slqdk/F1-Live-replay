@@ -10,6 +10,10 @@ det i browseren, synkront med TV'et, også når du ser løbet forskudt.
   officielle arkiv, og teamradio hentes som mp3.
 - **Egen visning til TV, tablet og telefon** med timing-tårn, gab, dæk,
   sektorer, race control, vejr, teamradio og banekort.
+- **Sammenlign to kørere.** Tryk *Sammenlign* og klik på to kørere i
+  tårnet: deres omgangstider som graf, afstanden mellem dem omgang for
+  omgang (og om den bagerste henter), dækstints, stop og topfart. Kun
+  omgange op til det sted, du ser, så forsinket visning ikke afslører noget.
 - **Hvor kommer han ud, hvis han pitter nu?** Klik på en kører i tårnet
   under et løb eller en sprint. En stiplet række viser placeringen og
   afstanden til bilerne omkring ham, og banekortet viser stedet. Pittabet
@@ -190,7 +194,7 @@ F1's arkiv og bygger en `.f1rec`, der afspilles som alle andre optagelser.
 
 | Hvad | Hvem |
 |---|---|
-| Visning, `/analyse`, `/events`, `/recordings`, `/media`, `/api/public`, `/api/dev`, `/api/circuit` | alle, medmindre `VIEW_ALLOW`/`VIEW_TOKEN` er sat |
+| Visning, `/analyse`, `/events`, `/recordings`, `/media`, `/api/public`, `/api/dev`, `/api/circuit`, `/api/laps` | alle, medmindre `VIEW_ALLOW`/`VIEW_TOKEN` er sat |
 | `/admin`, øvrige `/api/*` | `ADMIN_ALLOW` (LAN/WireGuard), eller `?key=<ADMIN_TOKEN>` |
 
 Optagelser med F1 TV-data er til personlig brug. Gør dem ikke offentlige:
@@ -213,6 +217,7 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 | `GET /analyse` | udviklingssiden |
 | `GET /api/dev?year=2026&mode=quali\|race` | sæsonens GP'er, kørere med gab (s og m), hold bedst først |
 | `GET /api/circuit?key=14&year=2026` | banens omrids, svingnumre og pittab (banekort og pitprognose) |
+| `GET /api/laps?file=<fil>.f1rec&drivers=1,12` | omgangstider, flag og gab pr. omgang (sammenligning) |
 | `/admin`, `/api/status`, `/api/log`, `POST /api/token`, `/api/login`, `/api/feed`, `/api/archive/*` | admin |
 
 ## Udvikling
@@ -220,7 +225,7 @@ NPM, hvis f1live.slq.dk skal være tilgængelig udefra.
 ```bash
 dotnet run --project tests/CoreTests            # 277 checks (Core)
 dotnet run --project tests/ServerTests          # adgangskontrol + teamradio-tekst
-node --test tests/web/*.test.mjs                # merge-regler, udviklingsgrafen, banekort, pitprognose
+node --test tests/web/*.test.mjs                # merge-regler, udviklingsgrafen, banekort, pitprognose, sammenligning
 dotnet run --project src/SlqF1Live.Server       # lokalt: DATA_DIR=./data PORT=8137
 ```
 

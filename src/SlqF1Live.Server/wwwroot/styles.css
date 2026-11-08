@@ -66,7 +66,7 @@ button, select, input, textarea { font: inherit; color: inherit; }
 /* ---------- Topbjælke ---------- */
 .top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto auto;
   align-items: center;
   gap: 18px;
   padding: 10px 16px;
@@ -130,6 +130,9 @@ button, select, input, textarea { font: inherit; color: inherit; }
   border-radius: 6px;
 }
 .nav-link:hover { color: var(--text); border-color: var(--muted); }
+.cmp-btn { background: transparent; cursor: pointer; line-height: inherit; }
+.cmp-btn[aria-pressed="true"] { background: var(--panel-2); color: var(--text); border-color: var(--muted); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---------- Layout ---------- */
 .layout {
@@ -197,14 +200,23 @@ button, select, input, textarea { font: inherit; color: inherit; }
   left: 0; right: 0;
   height: var(--row-h);
   padding: 0 .4em;
-  border-bottom: 1px solid rgba(36, 53, 77, .55);
+  border-bottom: 1px solid #2c4060;   /* tydelig streg mellem kørerne */
   transition: transform .45s cubic-bezier(.2, .7, .2, 1), opacity .3s;
 }
-.row.alt { background: rgba(21, 32, 48, .55); }
+.row.alt { background: #172334; }    /* hver anden række lysere */
+@media (hover: hover) { .row:not(.ghost):hover { background-color: #1e2d44; } }
 .row.out { opacity: .42; }
 /* Pitprognose (kun i løb): valgt kører + rækken "hvis han pitter nu" */
 .tower.pitable .row:not(.ghost) { cursor: pointer; }
 .row.picked { box-shadow: inset .22em 0 0 var(--text); background: rgba(233, 238, 245, .08); }
+/* Sammenligning: A fuld streg, B stiplet — som linjerne i grafen */
+.row.cmp-a, .row.cmp-b { background-color: rgba(233, 238, 245, .08); }
+.row.cmp-a { box-shadow: inset .22em 0 0 var(--text); }
+.row.cmp-b {
+  background-image: repeating-linear-gradient(180deg, var(--text) 0 .32em, transparent .32em .54em);
+  background-size: .22em 100%;
+  background-repeat: no-repeat;
+}
 .row.ghost {
   display: flex;
   align-items: center;
@@ -355,7 +367,86 @@ button, select, input, textarea { font: inherit; color: inherit; }
   font: 500 13px/1.4 var(--font-ui);
   cursor: pointer;
 }
-.filter-btn:hover, .filter-btn[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
+.filter-btn:hover, .filter-btn[aria-expanded="true"], .filter-btn[aria-pressed="true"] { color: var(--text); border-color: var(--muted); }
+
+/* ---------- Sammenlign omgangstider ---------- */
+.cmp-panel { display: none; min-width: 0; }
+body.comparing .cmp-panel { display: flex; }
+@media (min-width: 961px) {
+  /* Grafen tager race controls og teamradioens plads, så den bliver stor nok */
+  body.comparing .cmp-panel { grid-row: 2 / 4; }
+  body.comparing .rc-panel, body.comparing .radio-panel { display: none; }
+}
+.cmp-panel .panel-head { flex-wrap: wrap; align-items: center; row-gap: 6px; }
+.cmp-panel .panel-head h2 { margin: 0; }
+.cmp-legend { display: flex; flex: 1; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.cmp-views { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.cmp-views button {
+  background: transparent; border: 0; padding: 2px 10px; cursor: pointer;
+  color: var(--muted); font: 500 13px/1.4 var(--font-ui);
+}
+.cmp-views button + button { border-left: 1px solid var(--line); }
+.cmp-views button[aria-pressed="true"] { background: var(--panel-2); color: var(--text); }
+.cmp-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+  padding: 2px 8px 2px 6px;
+  font: 600 14px/1.25 var(--font-num); color: var(--text); cursor: pointer;
+}
+.cmp-chip:hover { border-color: var(--muted); }
+.cmp-chip .x { color: var(--muted); font-weight: 500; margin-left: 4px; }
+.sw { vertical-align: middle; margin-right: 4px; flex: none; }
+.sw line { stroke-width: 2.5; }
+.cmp-hint { margin: 6px 0 2px; color: var(--muted); font-size: 14px; }
+.cmp-chart { position: relative; flex: 1 1 auto; min-height: 150px; margin-top: 4px; }
+.cmp-chart:focus-visible { outline-offset: 0; }
+.cmp-svg { position: absolute; inset: 0; display: block; touch-action: pan-y; }
+.cmp-svg .grid { stroke: var(--line); stroke-width: 1; }
+.cmp-svg .axis { stroke: var(--dim); stroke-width: 1; }
+.cmp-svg .tick { fill: var(--muted); font: 500 11px var(--font-num); font-variant-numeric: tabular-nums; }
+.cmp-svg .lap-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.cmp-svg .mark { stroke: var(--panel); stroke-width: 1; }
+.cmp-svg .mark.pit { fill: var(--panel); stroke-width: 1.8; }
+.cmp-svg .end-label { fill: var(--text); font: 600 12px var(--font-num); }
+.cmp-svg .band-S { fill: rgba(255, 154, 31, .17); }
+.cmp-svg .band-V { fill: rgba(255, 154, 31, .09); }
+.cmp-svg .band-R { fill: rgba(229, 50, 45, .18); }
+.cmp-svg .band-label { fill: var(--muted); font: 600 10px var(--font-num); }
+.cmp-svg .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; }
+.cmp-svg .hl { fill: none; stroke-width: 2; }
+.cmp-svg .zero { stroke: var(--muted); stroke-width: 1; }
+.cmp-svg .gap-area { opacity: .2; }
+.cmp-svg .gap-line { fill: none; stroke: var(--text); stroke-width: 2; stroke-linejoin: round; }
+.cmp-svg .gap-pit { fill: var(--panel); stroke: var(--text); stroke-width: 1.6; }
+.cmp-svg .side-label { fill: var(--muted); font: 600 11px var(--font-num); }
+.cmp-svg .strip-label { fill: var(--muted); font: 600 9px var(--font-num); }
+.cmp-svg .stint-label { fill: #0f1722; font: 700 7px var(--font-num); }
+.tyre-dot { display: inline-block; width: .62em; height: .62em; border-radius: 50%; margin-right: .3em; vertical-align: .02em; }
+.cmp-stats td.wide { text-align: left; white-space: normal; }
+.cmp-tip {
+  position: absolute; z-index: 2; pointer-events: none;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 9px; box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  font: 500 14px/1.35 var(--font-num); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.cmp-tip .tip-head { color: var(--muted); }
+.cmp-tip table { border-collapse: collapse; }
+.cmp-tip th { text-align: left; font-weight: 600; padding-right: 10px; }
+.cmp-tip td { padding-right: 8px; }
+.cmp-tip .fl { color: var(--muted); padding-right: 0; }
+.cmp-tip .tip-diff { margin-top: 2px; }
+.cmp-stats, .cmp-laps { width: 100%; border-collapse: collapse; font: 500 14px/1.3 var(--font-num); font-variant-numeric: tabular-nums; }
+.cmp-stats { margin-top: 6px; font-size: 13.5px; line-height: 1.2; }
+.cmp-stats th, .cmp-stats td, .cmp-laps th, .cmp-laps td { padding: 3px 6px; text-align: right; white-space: nowrap; }
+.cmp-stats th, .cmp-stats td { padding: 2px 6px; }
+.cmp-stats tbody tr + tr { border-top: 1px solid rgba(36, 53, 77, .6); }
+.cmp-stats tbody th { white-space: normal; }
+.cmp-stats thead th, .cmp-laps thead th { color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); }
+.cmp-stats tbody th, .cmp-laps tbody th { text-align: left; color: var(--muted); font-weight: 500; }
+.cmp-stats small, .cmp-laps small { color: var(--muted); font-size: .85em; white-space: nowrap; }
+.cmp-laps tbody tr:nth-child(even) { background: rgba(21, 32, 48, .55); }
+.cmp-table-wrap { flex: 1 1 auto; min-height: 150px; overflow: auto; margin-top: 4px; }
+.cmp-laps thead th { position: sticky; top: 0; background: var(--panel); }
 .radio-filter { padding: 8px 0 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
 .rf-actions { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--muted); font-size: 13px; }
 .rf-actions span { margin-right: auto; }
@@ -490,7 +581,11 @@ body[data-mode="live"] { --chrome: 155px; }
   .trackstatus, .weather { grid-column: 1 / -1; justify-self: start; }
   .modes { grid-column: 1 / -1; justify-self: stretch; }
   .modes button { flex: 1; }
-  .nav-link { grid-column: 1 / -1; justify-self: start; }
+  .cmp-btn { grid-column: 1; justify-self: start; }
+  .nav-link:not(.cmp-btn) { grid-column: 2; justify-self: end; }
+  body.comparing .cmp-panel { order: -1; }
+  .cmp-chart { flex: none; height: 260px; }
+  .cmp-table-wrap { flex: none; max-height: 60vh; }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .side { grid-template-rows: auto; }
   .map-panel { aspect-ratio: 3 / 2; }
@@ -504,6 +599,11 @@ body[data-mode="live"] { --chrome: 155px; }
     grid-template-columns: [pos] 1.9em [drv] minmax(3.8em, 1fr) [gap] minmax(4.4em, 1fr) [int] minmax(4.2em, 1fr) [tyre] 3.2em [pit] 2.2em;
   }
   .c-last, .c-best { display: none !important; }
+  .cmp-stats, .cmp-laps { font-size: 13px; }
+  .cmp-stats th, .cmp-stats td, .cmp-laps th, .cmp-laps td { padding: 3px 4px; }
+  .cmp-stats td small.sub { display: block; }
+  .cmp-panel .panel-head h2 { flex: 1; }
+  .cmp-legend { order: 2; flex-basis: 100%; }
   .row.ghost .ghost-text { font-size: .72em; line-height: 1.06; padding-left: 2.2em; }
   .row.ghost .ghost-detail { display: block; margin-left: 0; }
   .pos-label { min-width: 0; }

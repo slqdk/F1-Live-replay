@@ -30,6 +30,7 @@
     <button type="button" data-mode="delay" aria-pressed="false">Forsinket</button>
     <button type="button" data-mode="replay" aria-pressed="false">Afspilning</button>
   </nav>
+  <button type="button" id="cmpBtn" class="nav-link cmp-btn" aria-pressed="false" aria-controls="cmpPanel">Sammenlign</button>
   <a class="nav-link" href="analyse.html">Udvikling</a>
 </header>
 
@@ -53,6 +54,23 @@
   </section>
 
   <aside class="side">
+    <section id="cmpPanel" class="panel cmp-panel" aria-labelledby="cmpTitle">
+      <div class="panel-head">
+        <h2 id="cmpTitle">Sammenlign</h2>
+        <div id="cmpLegend" class="cmp-legend"></div>
+        <div class="cmp-views" role="group" aria-label="Visning">
+          <button type="button" data-cmpview="laps" aria-pressed="true">Tider</button>
+          <button type="button" data-cmpview="gap" aria-pressed="false">Afstand</button>
+          <button type="button" data-cmpview="table" aria-pressed="false">Tabel</button>
+        </div>
+      </div>
+      <p id="cmpHint" class="cmp-hint" role="status"></p>
+      <div id="cmpChart" class="cmp-chart" tabindex="0" role="img" aria-label="Graf over omgangstider. Piletaster flytter mellem omgange.">
+        <div id="cmpTip" class="cmp-tip" hidden></div>
+      </div>
+      <div id="cmpTable" class="cmp-table-wrap" hidden></div>
+      <table id="cmpStats" class="cmp-stats"></table>
+    </section>
     <section class="panel map-panel" aria-label="Banekort">
       <canvas id="map" class="map" width="600" height="400"></canvas>
       <p id="mapEmpty" class="empty small">Banekortet kræver positionsdata (F1 TV).</p>
